@@ -18,8 +18,10 @@
 - [ ] Lens Studio Knowledge Base — needs owner logged into Lens Studio (My Lenses > Login)
 - [x] Skill pack installed (plan-lens, reviewed)
 - [x] git init (branch main), .gitignore extended (Cache, Workspaces, Support, locks, skill-pack copies; `.mcp.json` token stays ignored), files staged
-- [ ] First commit — needs git author name from owner
-- [ ] CLAD plugin installed (owner types slash commands)
+- [x] First commit 21de4d5 (repo-local identity: Sandro Gelenidze)
+- [x] Lens Studio MCP verified live (ListInstalledPackages: SIK 2.0.0, UI Kit 2.0.0)
+- [x] ls-extensions marketplace added
+- [ ] CLAD plugin (`ls-clad@ls-extensions`) installed — owner to run `/plugin install ls-clad@ls-extensions` then `/reload-plugins`
 
 ## Phase 3 — Plan
 - [ ] plan-lens run, devpost/design-brief.md written
