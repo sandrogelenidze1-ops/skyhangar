@@ -1,0 +1,83 @@
+- !<AssetImportMetadata/8fbe4e7f-7b47-44a0-ac73-d7b64c72ed98>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 20bdf89e-6f3b-4a1f-843d-387ef9d962a2
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 20bdf89e-6f3b-4a1f-843d-387ef9d962a2
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 35081b65-1b0a-4b7c-b593-590655f76a39
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/35081b65-1b0a-4b7c-b593-590655f76a39>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 9220ff42-3e18-4e3d-8cc3-3cb794ea4cc4
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    arrowLabelTint: false
+    cameraObject: false
+    hangarPadText: false
+    padLabelColor: false
+    reticleBlockWidthCm: false
+    reticleLabelColor: false
+    skyPadText: false
+    stampColor: false
+    stampSeconds: false
+    stampText: false
+    trailLabelColor: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      trailLabelColor: !<Vec4> {x: 0.850000, y: 0.950000, z: 1.000000, w: 1.000000}
+      arrowLabelTint: !<Vec4> {x: 0.950000, y: 0.970000, z: 1.000000, w: 1.000000}
+      stampColor: !<Vec4> {x: 0.450000, y: 1.000000, z: 0.600000, w: 1.000000}
+      stampText: COLLECTED
+      stampSeconds: !<float> 2.000000
+      hangarPadText: Hangar
+      skyPadText: Sky
+      padLabelColor: !<Vec4> {x: 0.900000, y: 0.960000, z: 1.000000, w: 1.000000}
+      reticleLabelColor: !<Vec4> {x: 1.000000, y: 1.000000, z: 1.000000, w: 1.000000}
+      reticleBlockWidthCm: !<float> 90.000000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarLabelsUI – trail codes, arrow label, stamp</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject (labels face it)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input vec4 trailLabelColor = "{0.85, 0.95, 1.0, 1}" {"hint":"Trail label colour", "widget":"color"}'
+    - '// @input vec4 arrowLabelTint = "{0.95, 0.97, 1.0, 1}" {"hint":"Edge-arrow label colour (soft white)", "widget":"color"}'
+    - '// @input vec4 stampColor = "{0.45, 1.0, 0.6, 1}" {"hint":"Collected stamp colour", "widget":"color"}'
+    - '// @input string stampText = "COLLECTED" {"hint":"Collected stamp text"}'
+    - '// @input float stampSeconds = 2 {"hint":"Seconds the Collected stamp stays up", "widget":"slider", "min":0.5, "max":5, "step":0.1}'
+    - '// @input string hangarPadText = "Hangar" {"hint":"Label shown under the hangar pad"}'
+    - '// @input string skyPadText = "Sky" {"hint":"Label shown above the Sky return pad"}'
+    - '// @input vec4 padLabelColor = "{0.9, 0.96, 1.0, 1}" {"hint":"Pad label colour", "widget":"color"}'
+    - '// @input vec4 reticleLabelColor = "{1, 1, 1, 1}" {"hint":"Aim reticle label colour", "widget":"color"}'
+    - '// @input float reticleBlockWidthCm = 90 {"hint":"Aim reticle label block width at the sky dome, cm", "widget":"slider", "min":20, "max":150, "step":1}'
+    - '// @ui {"widget":"group_end"}'

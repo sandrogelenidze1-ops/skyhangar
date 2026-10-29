@@ -1,0 +1,116 @@
+- !<AssetImportMetadata/b2b1eb7a-51b9-44f2-a9ce-968a850290b4>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 3611ec17-487f-405e-b52e-d194ad4ed2f2
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 3611ec17-487f-405e-b52e-d194ad4ed2f2
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> fbcb290c-16ff-4678-804f-d2289930c3fb
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/fbcb290c-16ff-4678-804f-d2289930c3fb>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 095d586c-4553-4f39-a190-e9403679f117
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    arrows: false
+    audio: false
+    cameraObject: false
+    cardBesideDeg: false
+    cardDistanceCm: false
+    cardInViewDeg: false
+    collectedPlace: false
+    debugLogs: false
+    held: false
+    infoCard: false
+    labels: false
+    menuBar: false
+    prefillDay: false
+    prefillIds: false
+    radar: false
+    shelf: false
+    shelfUI: false
+    sky: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      held: !<MappingBased.AssignableType_2> 00000000-0000-0000-0000-000000000000
+      shelf: !<MappingBased.AssignableType_3> 00000000-0000-0000-0000-000000000000
+      shelfUI: !<MappingBased.AssignableType_4> 00000000-0000-0000-0000-000000000000
+      radar: !<MappingBased.AssignableType_5> 00000000-0000-0000-0000-000000000000
+      arrows: !<MappingBased.AssignableType_6> 00000000-0000-0000-0000-000000000000
+      menuBar: !<MappingBased.AssignableType_7> 00000000-0000-0000-0000-000000000000
+      infoCard: !<MappingBased.AssignableType_8> 00000000-0000-0000-0000-000000000000
+      labels: !<MappingBased.AssignableType_9> 00000000-0000-0000-0000-000000000000
+      audio: !<MappingBased.AssignableType_10> 00000000-0000-0000-0000-000000000000
+      collectedPlace: "Ealing, London"
+      prefillIds: !<string[]>
+        - BA169
+        - CX257
+        - SAT25544
+        - VS93
+        - DL31
+        - JJ8084
+        - LX29K
+        - EY69W
+        - AY96W
+        - BY8AB
+        - GUIDO
+        - SAT20580
+      prefillDay: 27 Oct
+      cardDistanceCm: !<float> 120.000000
+      cardBesideDeg: !<float> 10.000000
+      cardInViewDeg: !<float> 20.000000
+      debugLogs: true
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarMain – orchestrator</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - "// @input SceneObject cameraObject {\"hint\":\"The main camera SceneObject (the user's head)\"}"
+    - '// @input AssignableType_1 sky {"hint":"StandIn_VirtualSky controller"}'
+    - '// @input AssignableType_2 held {"hint":"Held-toy controller (pull, pads, collect, sky return, throw)"}'
+    - '// @input AssignableType_3 shelf {"hint":"Hangar shelf controller (collection, paging, stands + models)"}'
+    - '// @input AssignableType_4 shelfUI {"hint":"Hangar shelf plaques + paging UI"}'
+    - '// @input AssignableType_5 radar {"hint":"Radar controller"}'
+    - '// @input AssignableType_6 arrows {"hint":"Edge arrows controller"}'
+    - '// @input AssignableType_7 menuBar {"hint":"Menu bar UI"}'
+    - '// @input AssignableType_8 infoCard {"hint":"Info card UI"}'
+    - '// @input AssignableType_9 labels {"hint":"World labels UI (trail codes, reticle label, pad labels, arrow label, Collected stamp)"}'
+    - '// @input AssignableType_10 audio {"hint":"Audio cues"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - "// @input string collectedPlace = \"Ealing, London\" {\"hint\":\"Place name written on plaques as 'where collected' (hard-coded to match the snapshot location)\"}"
+    - "// @input string[] prefillIds = {\"BA169\",\"CX257\",\"SAT25544\",\"VS93\",\"DL31\",\"JJ8084\",\"LX29K\",\"EY69W\",\"AY96W\",\"BY8AB\",\"GUIDO\",\"SAT20580\"} {\"hint\":\"Sky object ids pre-filled on the hangar shelf so paging is visible (the hangar can't persist between sessions)\"}"
+    - "// @input string prefillDay = \"27 Oct\" {\"hint\":\"Day written as 'when collected' on the pre-filled demo models\"}"
+    - '// @input float cardDistanceCm = 120 {"hint":"Distance of the info card from the user, cm", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float cardBesideDeg = 10 {"hint":"How far beside the tapped object the card opens, degrees (to its right)", "widget":"slider", "min":0, "max":30, "step":0.5}'
+    - '// @input float cardInViewDeg = 20 {"hint":"If the tapped object is further than this from the view centre, the card opens at the view centre instead (degrees)", "widget":"slider", "min":5, "max":60, "step":1}'
+    - '// @input bool debugLogs = true {"hint":"Print state changes to the log"}'
+    - '// @ui {"widget":"group_end"}'

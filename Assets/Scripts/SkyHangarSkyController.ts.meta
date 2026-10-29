@@ -1,0 +1,107 @@
+- !<AssetImportMetadata/72c8f548-06e3-476f-aebd-928f471ed081>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 0e8359c0-f5fa-48c3-adb2-ebeb268a215e
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 0e8359c0-f5fa-48c3-adb2-ebeb268a215e
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> dc170d22-d20d-4bf8-9113-a78e5203cfa3
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/dc170d22-d20d-4bf8-9113-a78e5203cfa3>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 6b4260e1-ac44-490d-9dd2-0c301e20d1f2
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    boxMesh: false
+    cameraObject: false
+    coneMesh: false
+    cylinderMesh: false
+    dragStartDeg: false
+    glyphSpanCm: false
+    helicopterColor: false
+    litMaterial: false
+    planeColor: false
+    reticleSizeCm: false
+    satelliteCyan: false
+    showHorizonRing: false
+    skyDomeRadiusCm: false
+    sphereMesh: false
+    tapMaxSeconds: false
+    targetRadiusCm: false
+    trailTint: false
+    trailWidthCm: false
+    unlitMaterial: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      boxMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
+      cylinderMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
+      sphereMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
+      coneMesh: !<reference.RenderMesh> 00000000-0000-0000-0000-000000000000
+      litMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      unlitMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      skyDomeRadiusCm: !<float> 400.000000
+      glyphSpanCm: !<float> 13.000000
+      targetRadiusCm: !<float> 28.000000
+      planeColor: !<Vec4> {x: 0.950000, y: 0.970000, z: 1.000000, w: 1.000000}
+      helicopterColor: !<Vec4> {x: 1.000000, y: 0.720000, z: 0.280000, w: 1.000000}
+      satelliteCyan: !<Vec4> {x: 0.350000, y: 0.900000, z: 1.000000, w: 1.000000}
+      trailTint: !<Vec4> {x: 0.450000, y: 1.000000, z: 0.600000, w: 1.000000}
+      trailWidthCm: 1.400000
+      reticleSizeCm: !<float> 24.000000
+      tapMaxSeconds: 0.300000
+      dragStartDeg: !<float> 3.000000
+      showHorizonRing: true
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarSkyController – virtual sky stand-in</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - "// @input SceneObject cameraObject {\"hint\":\"The main camera SceneObject (the user's head). The dome follows its position only.\"}"
+    - '// @input Asset.RenderMesh boxMesh {"hint":"Primitive box mesh used for glyphs, trails and model parts"}'
+    - '// @input Asset.RenderMesh cylinderMesh {"hint":"Primitive cylinder mesh"}'
+    - '// @input Asset.RenderMesh sphereMesh {"hint":"Primitive sphere mesh"}'
+    - '// @input Asset.RenderMesh coneMesh {"hint":"Primitive cone mesh"}'
+    - '// @input Asset.Material litMaterial {"hint":"Lit base material (cloned per colour)"}'
+    - '// @input Asset.Material unlitMaterial {"hint":"Unlit, alpha-blended base material (cloned per colour)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float skyDomeRadiusCm = 400 {"hint":"Radius of the virtual sky dome in cm (keep under the SIK interactor ray length of 500 cm)", "widget":"slider", "min":200, "max":480, "step":10}'
+    - '// @input float glyphSpanCm = 13 {"hint":"Visual size of each sky glyph, cm (13 cm at 4 m is about 1.9 degrees)", "widget":"slider", "min":5, "max":40, "step":0.5}'
+    - "// @input float targetRadiusCm = 28 {\"hint\":\"Radius of each marker's pinch target collider in cm — kept generous so small glyphs are easy to aim at\", \"widget\":\"slider\", \"min\":10, \"max\":60, \"step\":1}"
+    - '// @input vec4 planeColor = "{0.95, 0.97, 1.0, 1.0}" {"hint":"Plane glyph colour", "widget":"color"}'
+    - '// @input vec4 helicopterColor = "{1.0, 0.72, 0.28, 1.0}" {"hint":"Helicopter glyph colour", "widget":"color"}'
+    - '// @input vec4 satelliteCyan = "{0.35, 0.9, 1.0, 1.0}" {"hint":"Satellite glyph colour", "widget":"color"}'
+    - '// @input vec4 trailTint = "{0.45, 1.0, 0.6, 1.0}" {"hint":"Trail colour (green per the style guide); alpha fades along the path", "widget":"color"}'
+    - '// @input float trailWidthCm = 1.4 {"hint":"Trail line width at the dome, cm (thin)", "widget":"slider", "min":0.3, "max":5, "step":0.1}'
+    - '// @input float reticleSizeCm = 24 {"hint":"Aim reticle size (corner-bracket box side), cm at the dome", "widget":"slider", "min":8, "max":60, "step":1}'
+    - '// @input float tapMaxSeconds = 0.3 {"hint":"A pinch released faster than this (s) without moving counts as a tap", "widget":"slider", "min":0.1, "max":0.8, "step":0.05}'
+    - '// @input float dragStartDeg = 3 {"hint":"Ray movement (deg) during a pinch that turns it into a pull", "widget":"slider", "min":1, "max":15, "step":0.5}'
+    - '// @input bool showHorizonRing = true {"hint":"Show a faint dashed horizon ring so the stand-in sky reads clearly in preview"}'
+    - '// @ui {"widget":"group_end"}'

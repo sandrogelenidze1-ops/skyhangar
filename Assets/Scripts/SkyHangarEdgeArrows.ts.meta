@@ -1,0 +1,74 @@
+- !<AssetImportMetadata/e1217724-88df-4969-8f4f-9f26a4550487>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> dcf7d2e3-4a16-4c5f-a84b-e8a6a1ebc73f
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> dcf7d2e3-4a16-4c5f-a84b-e8a6a1ebc73f
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> ce0c057a-63b4-4c56-bd4f-9650ca23a547
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/ce0c057a-63b4-4c56-bd4f-9650ca23a547>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: a1c3c41a-35cf-4dd9-abd4-c5ee4a42953b
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    arrowTint: false
+    cameraObject: false
+    edgeInset: false
+    inViewHalfAngleDeg: false
+    maxArrows: false
+    nearestGlow: false
+    ringDistanceCm: false
+    sky: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      maxArrows: !<float> 5.000000
+      ringDistanceCm: !<float> 80.000000
+      edgeInset: 0.860000
+      inViewHalfAngleDeg: !<float> 17.000000
+      arrowTint: !<Vec4> {x: 0.950000, y: 0.970000, z: 1.000000, w: 1.000000}
+      nearestGlow: !<Vec4> {x: 0.380000, y: 0.680000, z: 1.000000, w: 1.000000}
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarEdgeArrows – off-screen pointers</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject"}'
+    - '// @input AssignableType_1 sky {"hint":"Sky controller (marker positions)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float maxArrows = 5 {"hint":"How many arrows to show at most", "widget":"slider", "min":1, "max":10, "step":1}'
+    - '// @input float ringDistanceCm = 80 {"hint":"Distance of the arrow ring in front of the eyes, cm", "widget":"slider", "min":40, "max":150, "step":1}'
+    - '// @input float edgeInset = 0.86 {"hint":"How close to the display edge the arrows sit (1 = right on the edge of the camera FOV)", "widget":"slider", "min":0.5, "max":1, "step":0.01}'
+    - "// @input float inViewHalfAngleDeg = 17 {\"hint\":\"Treat an object as 'in view' when it is within this many degrees of the view centre\", \"widget\":\"slider\", \"min\":5, \"max\":40, \"step\":1}"
+    - '// @input vec4 arrowTint = "{0.95, 0.97, 1.0, 1.0}" {"hint":"Arrow colour (soft white)", "widget":"color"}'
+    - '// @input vec4 nearestGlow = "{0.38, 0.68, 1.0, 1.0}" {"hint":"Glow colour of the nearest-aircraft arrow (accent)", "widget":"color"}'
+    - '// @ui {"widget":"group_end"}'

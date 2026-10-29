@@ -1,0 +1,83 @@
+- !<AssetImportMetadata/0e230ebc-aa9d-4b69-95cd-32b142fdd66a>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 51abecd4-846b-4310-8783-aefeca713ef1
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 51abecd4-846b-4310-8783-aefeca713ef1
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> f572d94c-9e01-43a9-88fe-0cb321bcd940
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/f572d94c-9e01-43a9-88fe-0cb321bcd940>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: bb9ee304-4bae-4bde-a958-f7dc11b976a8
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    aboveEyeDeg: false
+    cameraObject: false
+    defaultTab: false
+    dropSeconds: false
+    followSeconds: false
+    mapMaterial: false
+    menuClearanceDeg: false
+    panelWidthCm: false
+    placeDistanceCm: false
+    readDistanceCm: false
+    tiltDeg: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      mapMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      panelWidthCm: !<float> 34.000000
+      readDistanceCm: !<float> 120.000000
+      placeDistanceCm: !<float> 90.000000
+      aboveEyeDeg: !<float> 4.000000
+      menuClearanceDeg: 2.500000
+      dropSeconds: 0.600000
+      followSeconds: 0.900000
+      tiltDeg: !<float> 7.000000
+      defaultTab: info
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarInfoCardUI – glass flight card</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject (card faces it and follows it)"}'
+    - '// @input Asset.Material mapMaterial {"hint":"Unlit material cloned for the Route tab map lines (the same one the sky trails use)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float panelWidthCm = 34 {"hint":"Glass panel width, cm", "widget":"slider", "min":24, "max":50, "step":0.5}'
+    - '// @input float readDistanceCm = 120 {"hint":"Distance the card is read from, cm (scales the type)", "widget":"slider", "min":60, "max":200, "step":5}'
+    - '// @input float placeDistanceCm = 90 {"hint":"Distance of the card from the head, cm (about 0.9 m)", "widget":"slider", "min":60, "max":140, "step":1}'
+    - '// @input float aboveEyeDeg = 4 {"hint":"Elevation of the card centre above eye level, degrees", "widget":"slider", "min":0, "max":15, "step":0.5}'
+    - '// @input float menuClearanceDeg = 2.5 {"hint":"Gap kept between the card bottom and the menu bar top, degrees", "widget":"slider", "min":0, "max":8, "step":0.5}'
+    - '// @input float dropSeconds = 0.6 {"hint":"Seconds for the card to drop from the aircraft to its spot", "widget":"slider", "min":0.1, "max":2, "step":0.05}'
+    - '// @input float followSeconds = 0.9 {"hint":"Follow lag: seconds for the card to catch up when you move or turn", "widget":"slider", "min":0.2, "max":3, "step":0.05}'
+    - '// @input float tiltDeg = 7 {"hint":"Perspective tilt toward the user, degrees", "widget":"slider", "min":0, "max":25, "step":0.5}'
+    - '// @input string defaultTab = "info" {"hint":"Tab shown when a card opens", "widget":"combobox", "values":[{"label":"Info", "value":"info"}, {"label":"Route", "value":"route"}]}'
+    - '// @ui {"widget":"group_end"}'

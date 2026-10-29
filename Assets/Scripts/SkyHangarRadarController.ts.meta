@@ -1,0 +1,80 @@
+- !<AssetImportMetadata/ac30f814-33c1-477d-bac3-7412b38e3622>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 4ab5e8a5-7fe4-4f87-952b-63227010b4d8
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 4ab5e8a5-7fe4-4f87-952b-63227010b4d8
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> e47896fb-22a4-4fc6-99ed-1c8a666f24b2
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/e47896fb-22a4-4fc6-99ed-1c8a666f24b2>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: e0fbf9ac-62d4-4707-a127-35fad5a565e9
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    cameraObject: false
+    diameterCm: false
+    discRoot: false
+    includeSatellites: false
+    openOffset: false
+    radarColor: false
+    rangeKm: false
+    sky: false
+    sweepSeconds: false
+    tiltDeg: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      discRoot: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      openOffset: !<Vec3> {x: 0.000000, y: -16.000000, z: -100.000000}
+      diameterCm: !<float> 40.000000
+      tiltDeg: !<float> 45.000000
+      rangeKm: !<float> 70.000000
+      sweepSeconds: !<float> 4.000000
+      includeSatellites: false
+      radarColor: !<Vec4> {x: 0.350000, y: 0.950000, z: 0.600000, w: 1.000000}
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarRadarController – tilted radar disc</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject"}'
+    - '// @input AssignableType_1 sky {"hint":"Sky controller — provides the shared primitive kit and marker colours"}'
+    - '// @input SceneObject discRoot {"hint":"Tilted child that holds the disc content"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input vec3 openOffset = "{0, -2, -100}" {"hint":"Disc centre relative to the eyes when opened (x right, y up, -z ahead), cm"}'
+    - '// @input float diameterCm = 40 {"hint":"Disc diameter, cm", "widget":"slider", "min":20, "max":70, "step":1}'
+    - '// @input float tiltDeg = 45 {"hint":"Tilt toward the user, degrees (0 = flat table, 90 = upright)", "widget":"slider", "min":0, "max":90, "step":1}'
+    - '// @input float rangeKm = 70 {"hint":"Radar range at the rim, km", "widget":"slider", "min":10, "max":150, "step":1}'
+    - '// @input float sweepSeconds = 4 {"hint":"Sweep rotation, seconds per revolution", "widget":"slider", "min":1, "max":10, "step":0.5}'
+    - '// @input bool includeSatellites {"hint":"Include satellites as blips (they are not really on a tower radar)"}'
+    - '// @input vec4 radarColor = "{0.35, 0.95, 0.6, 1.0}" {"hint":"Ring and sweep colour", "widget":"color"}'
+    - '// @ui {"widget":"group_end"}'

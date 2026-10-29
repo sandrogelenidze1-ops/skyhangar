@@ -1,0 +1,89 @@
+- !<AssetImportMetadata/cf599fa4-2cff-4918-a2b9-195d8ee52480>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 425e22a5-9d6e-45d1-8e27-72c0278d6cbb
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 425e22a5-9d6e-45d1-8e27-72c0278d6cbb
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> b8baab86-77c0-46a5-bade-b79ede189a37
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/b8baab86-77c0-46a5-bade-b79ede189a37>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 738fca60-c4f2-4e58-a32b-2545fb3da955
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    belowViewDeg: false
+    brightenBelowDeg: false
+    buttonHeightCm: false
+    buttonWidthCm: false
+    cameraObject: false
+    dimOpacity: false
+    dimScale: false
+    distanceCm: false
+    driftDeadzoneDeg: false
+    labels: false
+    settleSeconds: false
+    viewHalfAngleDeg: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      distanceCm: !<float> 68.000000
+      belowViewDeg: !<float> 15.000000
+      viewHalfAngleDeg: !<float> 14.000000
+      buttonWidthCm: 6.500000
+      buttonHeightCm: 5.500000
+      settleSeconds: !<float> 1.000000
+      driftDeadzoneDeg: !<float> 6.000000
+      brightenBelowDeg: !<float> 12.000000
+      dimScale: 0.700000
+      dimOpacity: 0.450000
+      labels: !<string[]>
+        - Sky
+        - Radar
+        - Hangar
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarMenuBarUI – Sky / Radar / Hangar bar</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject (the bar follows it lazily)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float distanceCm = 68 {"hint":"Distance of the bar from the eyes, cm (~70 cm)", "widget":"slider", "min":40, "max":120, "step":1}'
+    - '// @input float belowViewDeg = 15 {"hint":"How far below the view centre the bar sits, degrees (lower part of the view)", "widget":"slider", "min":5, "max":30, "step":0.5}'
+    - "// @input float viewHalfAngleDeg = 14 {\"hint\":\"Half-size of the display region used for the 'in view' check, degrees\", \"widget\":\"slider\", \"min\":5, \"max\":30, \"step\":0.5}"
+    - '// @input float buttonWidthCm = 6.5 {"hint":"Width of each button, cm", "widget":"slider", "min":4, "max":12, "step":0.5}'
+    - '// @input float buttonHeightCm = 5.5 {"hint":"Height of each button, cm", "widget":"slider", "min":3, "max":10, "step":0.5}'
+    - '// @input float settleSeconds = 1 {"hint":"Seconds the bar takes to settle in front of you after you turn", "widget":"slider", "min":0.3, "max":3, "step":0.1}'
+    - '// @input float driftDeadzoneDeg = 6 {"hint":"How far (degrees) your view can move before the bar starts drifting after you", "widget":"slider", "min":0, "max":30, "step":0.5}'
+    - '// @input float brightenBelowDeg = 12 {"hint":"Look this many degrees below the horizon to brighten the bar", "widget":"slider", "min":0, "max":60, "step":1}'
+    - '// @input float dimScale = 0.7 {"hint":"Scale while dim (looking at the sky)", "widget":"slider", "min":0.3, "max":1, "step":0.05}'
+    - '// @input float dimOpacity = 0.45 {"hint":"Opacity while dim (looking at the sky)", "widget":"slider", "min":0.1, "max":1, "step":0.05}'
+    - '// @input string[] labels = {"Sky","Radar","Hangar"} {"hint":"Button labels: Sky, Radar, Hangar"}'
+    - '// @ui {"widget":"group_end"}'

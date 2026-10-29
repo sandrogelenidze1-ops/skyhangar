@@ -1,0 +1,80 @@
+- !<AssetImportMetadata/934cc640-24c4-488f-88b2-e8896f3fffc1>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> cbb518c2-de2a-4bd2-b19f-e053c7a973af
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> cbb518c2-de2a-4bd2-b19f-e053c7a973af
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 164fe338-e994-411b-98e9-80fb932bb4d6
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/164fe338-e994-411b-98e9-80fb932bb4d6>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 946ea070-edda-491f-8268-4c85af30d8b4
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    cameraObject: false
+    contentRoot: false
+    modelSpanCm: false
+    openOffset: false
+    plankColor: false
+    sky: false
+    standColor: false
+    standSpacingCm: false
+    swipeDeg: false
+    visibleSlots: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      contentRoot: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      openOffset: !<Vec3> {x: 0.000000, y: -14.000000, z: -100.000000}
+      visibleSlots: !<float> 5.000000
+      standSpacingCm: !<float> 13.000000
+      modelSpanCm: !<float> 14.000000
+      swipeDeg: !<float> 3.000000
+      plankColor: !<Vec4> {x: 0.750000, y: 0.800000, z: 0.900000, w: 1.000000}
+      standColor: !<Vec4> {x: 0.900000, y: 0.900000, z: 0.950000, w: 1.000000}
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarShelfController – hangar collection + paged shelf</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject"}'
+    - '// @input AssignableType_1 sky {"hint":"Sky controller — provides the shared primitive kit"}'
+    - '// @input SceneObject contentRoot {"hint":"Container the shelf content is built under (moves with the shelf root)"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input vec3 openOffset = "{0, -12, -100}" {"hint":"Shelf centre relative to the eyes when opened (x right, y up, -z ahead), cm"}'
+    - '// @input float visibleSlots = 5 {"hint":"Models shown on the shelf at a time (one page)", "widget":"slider", "min":3, "max":8, "step":1}'
+    - '// @input float standSpacingCm = 13 {"hint":"Horizontal spacing between stands, cm", "widget":"slider", "min":8, "max":30, "step":0.5}'
+    - '// @input float modelSpanCm = 10 {"hint":"Size of each model on its stand, cm", "widget":"slider", "min":6, "max":25, "step":0.5}'
+    - '// @input float swipeDeg = 3 {"hint":"Sideways ray movement (degrees) that counts as a page swipe", "widget":"slider", "min":1, "max":20, "step":0.5}'
+    - '// @input vec4 plankColor = "{0.75, 0.8, 0.9, 1.0}" {"hint":"Glass ledge tint (alpha is set by the style)", "widget":"color"}'
+    - '// @input vec4 standColor = "{0.86, 0.88, 0.92, 1.0}" {"hint":"Pedestal metal colour", "widget":"color"}'
+    - '// @ui {"widget":"group_end"}'

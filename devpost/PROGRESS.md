@@ -24,10 +24,11 @@
 - [ ] CLAD plugin (`ls-clad@ls-extensions`) installed — owner to run `/plugin install ls-clad@ls-extensions` then `/reload-plugins`
 
 ## Phase 3 — Plan
-- [ ] plan-lens run, devpost/design-brief.md written
-- [ ] Owner approved brief
+- [x] plan-lens run, devpost/design-brief.md written
+- [x] Owner approved brief (status: approved)
 
 ## Phase 4 — Build
+- Note (2026-10-28): Building without Lens Studio sign-in — owner can't log in to SPECS right now and asked to skip it. The Lens Studio Knowledge Base tool is not used; the build relies on the installed Lens Studio docs (`Support/*.d.ts`, package sources) and the CLAD API skills instead.
 - [ ] Basic flow
 - [ ] LEAF tests per done criterion
 - [ ] Preview verified

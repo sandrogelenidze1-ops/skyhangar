@@ -1,0 +1,32 @@
+# SkyHangar: design changes, round 1
+
+Source: the owner walked through the first build in Interactive Preview. The flow works (pull, hold, throw, hangar, radar). This round is about usability fixes and a much better look.
+Work in the order below. After each part, check the preview, re-run the LEAF tests, and fix anything that broke. Append a "Round 1 changes" section to `devpost/design-brief.md` listing what changed. Do not remove existing done criteria. Keep everything buildable and demonstrable in the preview.
+
+Visual direction: neat, calm, Apple-like glass. Light text, soft rounded panels, thin bright edges, subtle glow, generous spacing, one consistent type scale. The display is additive, so real backdrop blur is not possible: fake glass with a lighter translucent tint, a thin bright border and a soft inner glow. Never rely on dark panels. No funky icons.
+
+## Part A: behavior fixes (do first)
+
+1. **Menu bar follows me.** The Sky / Radar / Hangar bar must always be easy to find. Keep it in the lower part of my view at all times, following my head with the lazy-follow drift (settles in about a second). It stays compact and dim while I look at the sky and brightens when I look near it, but it must never be left behind when I turn or look down.
+2. **Info card opens beside the plane.** When I tap a plane, the card opens next to that plane, at the height I'm looking, not low down. It turns to face me. If I move or turn, it follows me with a gentle lag so it stays in view. Tapping elsewhere closes it.
+3. **Third option for a pulled model: send it back to the sky.** While I'm holding a model, show a second pad next to the hangar pad, marked with an up-arrow and "Sky". Releasing over it sends the model back along its path to its original place in the sky and removes it from my view. Releasing anywhere else still throws it and it returns to my hand. Also add a small "Let go" tap target on the model's card so it can be dismissed without a drag.
+4. **Hangar pad icon.** The pad currently shows a blue circle with an X, which doesn't say "hangar". Replace it with a simple hangar glyph (a hangar arch or plane-in-bay silhouette) and the label "Hangar". The "Sky" pad gets an up-arrow and the label "Sky".
+5. **Hangar scrolls.** It must handle 20 or more models. Show 5 on the shelf at a time. Dragging sideways on the shelf pages through the rest, with arrow buttons and page dots as backup, and a counter ("6–10 of 24"). Keep the models rotating on their own. Add a sort toggle: newest, or by airline. For the demo, pre-fill the hangar with about 12 models so the scroll is visible.
+6. **Trails run the whole route.** When I aim at or tap a plane, draw its full track across the sky: from where it appeared at the horizon to where it will disappear at the other horizon, as a smooth arc on the sky dome passing through the plane. Behind it: solid with a fading gradient. Ahead: dotted and fading. Label the two ends with the origin and destination airport codes. Use the route's great-circle path; the data may need airport coordinates added as a static table. Helicopters get only a past trail (where they've already flown), no landing path. Satellites get an orbit arc.
+7. **Sky markers are small and clear.** The sky icons are far too big. Make them small (roughly 1.5 to 2 degrees across), simple and glassy. They must say what the thing is at a glance: plane = a small white plane glyph pointing along its heading; helicopter = a small amber glyph with a rotor cross; satellite = a small shiny cyan dot with a faint ring. No 3D models in the sky. Same size family, differentiated by shape and color. Markers brighten when aimed at.
+
+## Part B: look and feel
+
+8. **Atmosphere in the preview.** Place the user on a rooftop terrace in a city, at dusk. A skyline of simple buildings around the horizon, a parapet at about 1.1 m (it also gives a sense of scale), a gradient sky, a few soft clouds, and a few distant lights. Keep it light on triangles. This is a preview-only backdrop; keep it clearly separate from the Lens's own UI so it can be switched off.
+9. **Better aircraft and helicopter models.** The held and hangar models are too low-poly. Rebuild them as cleaner, smoother stylized models with more detail: a smooth fuselage with more segments, wing sweep, engines, tail, a window line, and a soft rim highlight. Make three airliner shapes (narrowbody, widebody, regional), one helicopter with spinning rotors, and one satellite. Keep the triangle count sensible for Specs. Use neutral generated colors per airline, not real liveries, logos or tail marks (trademark rule).
+10. **Satellite model.** Replace the brown box with a cleaner satellite body and solar panels, in the same style as the planes.
+11. **Hangar look.** Keep the layout the owner likes. Restyle the shelf as a thin glass ledge with an edge glow, replace the plain gray stands with slim glass or metal pedestals, and put plaques in the glass style with larger, bright text.
+12. **Info card contents and picture.** Keep all current fields. Add a picture of the aircraft at the top of the card. Use a clean side-view illustration rendered from our own 3D models, one per aircraft type, because real photos have copyright and livery trademark problems. Layout: picture, airline and flight number, route with the progress bar, then the details grid (times, type, altitude, speed).
+13. **Type and size system.** Define one scale and use it everywhere. As a rule of thumb, body text should be at least about 1.3 cm tall at 1.2 m from the user (about 0.6 degrees), and titles about 2 cm. Use one clean sans-serif, light weight on glass, with consistent padding and corner radius. Plaques, cards, bar buttons and the radar labels all use this scale.
+14. **Radar and bar restyle.** Same glass style, thin range rings, a soft sweep, small blips using the same plane, helicopter and satellite glyphs as the sky, with the same colors.
+
+## Colors
+One palette: soft white for text and plane markers, amber for helicopters, cyan for satellites, a calm accent blue for interactive elements, translucent white-tinted glass for panels. No pure black panels.
+
+## Keep working
+All five original done criteria and the LEAF tests must keep passing. Add LEAF coverage for the new behaviors where possible: the Sky return pad, hangar paging, the card following me, and the menu bar staying in view. Update README.md and devpost/PROGRESS.md.

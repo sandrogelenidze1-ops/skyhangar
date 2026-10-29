@@ -1,0 +1,56 @@
+- !<AssetImportMetadata/9e6b2dba-a425-47ad-bce1-4eea2a830653>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 34e7a96b-2984-467e-b570-1c2a52199a1d
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 34e7a96b-2984-467e-b570-1c2a52199a1d
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 2920e750-c84c-4e5b-b3fd-e1f78b061112
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/2920e750-c84c-4e5b-b3fd-e1f78b061112>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 580c921a-0a97-434b-895e-3fdd6e8ff3db
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    plaqueWidth: false
+    readDistanceCm: false
+    titleOffset: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - plaqueWidth: !<float> 12.000000
+      readDistanceCm: !<float> 100.000000
+      titleOffset: !<Vec3> {x: 0.000000, y: 22.000000, z: 0.000000}
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarShelfUI – glass plaques + paging controls</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float plaqueWidth = 12.4 {"hint":"Plaque width, cm", "widget":"slider", "min":8, "max":24, "step":0.5}'
+    - '// @input float readDistanceCm = 100 {"hint":"Reading distance used to size plaque text, cm", "widget":"slider", "min":50, "max":200, "step":5}'
+    - '// @input vec3 titleOffset = "{0, 22, 0}" {"hint":"Initial title plaque position in shelf space, cm (moved by the main script)"}'
+    - '// @ui {"widget":"group_end"}'

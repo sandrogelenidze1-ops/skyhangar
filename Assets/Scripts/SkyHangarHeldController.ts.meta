@@ -1,0 +1,98 @@
+- !<AssetImportMetadata/29f7860a-a96a-42c1-b41a-36432688c998>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 86dab3c4-59ae-432e-a0c9-56f94ef01350
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 86dab3c4-59ae-432e-a0c9-56f94ef01350
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> aa032746-0419-4880-a7f1-299405b30d7f
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/aa032746-0419-4880-a7f1-299405b30d7f>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 47ee9f6d-27e3-470e-8f91-ad0da5acddf4
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    cameraObject: false
+    flyInSeconds: false
+    handOffset: false
+    hangarPadColor: false
+    holdDistanceCm: false
+    modelSpanCm: false
+    padCaptureCm: false
+    padDiameterCm: false
+    padOffset: false
+    returnSeconds: false
+    sky: false
+    skyPadColor: false
+    skyPadOffset: false
+    skyReturnSeconds: false
+    throwMaxSpeedCm: false
+    throwSeconds: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      modelSpanCm: !<float> 25.000000
+      handOffset: !<Vec3> {x: 0.000000, y: -34.000000, z: -50.000000}
+      padOffset: !<Vec3> {x: 27.000000, y: -36.000000, z: -50.000000}
+      skyPadOffset: !<Vec3> {x: 20.000000, y: -8.000000, z: -54.000000}
+      padDiameterCm: !<float> 25.000000
+      padCaptureCm: !<float> 16.000000
+      holdDistanceCm: !<float> 62.000000
+      flyInSeconds: 0.800000
+      skyReturnSeconds: 1.100000
+      throwSeconds: 2.200000
+      returnSeconds: 1.200000
+      throwMaxSpeedCm: !<float> 350.000000
+      hangarPadColor: !<Vec4> {x: 0.450000, y: 0.750000, z: 1.000000, w: 1.000000}
+      skyPadColor: !<Vec4> {x: 0.850000, y: 0.950000, z: 1.000000, w: 1.000000}
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarHeldController – pull, pads, collect, sky return, throw</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - "// @input SceneObject cameraObject {\"hint\":\"The main camera SceneObject (the user's head)\"}"
+    - '// @input AssignableType_1 sky {"hint":"Sky controller — provides the shared primitive kit and marker positions"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Settings"}'
+    - '// @input float modelSpanCm = 25 {"hint":"Width of the pulled model in cm", "widget":"slider", "min":10, "max":40, "step":1}'
+    - '// @input vec3 handOffset = "{-9, -21, -48}" {"hint":"Where the model rests in your hand: x right, y up, z (negative = ahead) from the eyes, cm"}'
+    - '// @input vec3 padOffset = "{11, -24, -50}" {"hint":"Hangar pad position relative to the eyes (to the right of the hand), cm"}'
+    - '// @input vec3 skyPadOffset = "{12, -6, -54}" {"hint":"Sky return pad position relative to the eyes (above the hangar pad, toward the sky), cm"}'
+    - '// @input float padDiameterCm = 20 {"hint":"Pad diameter, cm", "widget":"slider", "min":10, "max":40, "step":1}'
+    - "// @input float padCaptureCm = 9 {\"hint\":\"Model counts as 'over a pad' within this distance of its centre, cm\", \"widget\":\"slider\", \"min\":5, \"max\":30, \"step\":1}"
+    - '// @input float holdDistanceCm = 58 {"hint":"Distance from the eyes at which a held model follows your pinch ray, cm", "widget":"slider", "min":30, "max":90, "step":1}'
+    - '// @input float flyInSeconds = 0.8 {"hint":"Seconds for the model to slide down from the sky into your hand", "widget":"slider", "min":0.2, "max":2, "step":0.05}'
+    - '// @input float skyReturnSeconds = 1.1 {"hint":"Seconds for the model to fly back to its place in the sky", "widget":"slider", "min":0.3, "max":3, "step":0.05}'
+    - '// @input float throwSeconds = 2 {"hint":"Seconds a thrown model glides along its release direction before curving back", "widget":"slider", "min":0.8, "max":4, "step":0.1}'
+    - '// @input float returnSeconds = 1.2 {"hint":"Seconds for the curve back to the hand", "widget":"slider", "min":0.5, "max":3, "step":0.1}'
+    - '// @input float throwMaxSpeedCm = 350 {"hint":"Fastest a throw can leave the hand, cm/s", "widget":"slider", "min":100, "max":600, "step":10}'
+    - '// @input vec4 hangarPadColor = "{0.45, 0.75, 1.0, 1.0}" {"hint":"Hangar pad colour (calm accent blue)", "widget":"color"}'
+    - '// @input vec4 skyPadColor = "{0.85, 0.95, 1.0, 1.0}" {"hint":"Sky pad colour", "widget":"color"}'
+    - '// @ui {"widget":"group_end"}'

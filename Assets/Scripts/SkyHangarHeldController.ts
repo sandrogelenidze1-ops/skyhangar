@@ -1,0 +1,713 @@
+// SkyHangarHeldController.ts
+// Owns: the "toy in your hand" — the 3D model pulled out of the sky, the two pads that fade in while
+// you hold it (Hangar pad = collect, Sky pad = send it back to its place in the sky), collect-on-pad,
+// return-to-sky, and the scripted throw-and-return path (helicopter rotors spin).
+// States: none -> flyingIn -> held -> (collecting | returningToSky | thrown -> returning -> resting).
+// Inspect from the hangar (beginInspect): a shelf model is pulled into the hand the same way; releasing over the
+// Sky pad sends it to the sky (and out of the collection); a slow release returns it to its shelf slot
+// (state returningToShelf); a flick is thrown like a sky model (thrown -> returning) but curves back to its slot.
+// While resting the model can be grabbed again (drag to a pad / throw) or quick-tapped to turn it.
+// Expects @inputs: camera object, the sky controller (PartKit + marker positions).
+// Emits onCollected / onThrown / onReturned / onSentToSky. Must not: show text or own the shelf.
+
+import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
+import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/ElementContent"
+import {Interactable} from "SpectaclesInteractionKit.lspkg/Components/Interaction/Interactable/Interactable"
+import {InteractorEvent} from "SpectaclesInteractionKit.lspkg/Core/Interactor/InteractorEvent"
+import {Interactor, InteractorInputType} from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
+import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
+import {SkyObjectInfo} from "./SkyHangarFlightData"
+import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
+import {SkyHangarSkyController} from "./SkyHangarSkyController"
+import {glassPanel, obj, PALETTE} from "./SkyHangarSharedUI"
+import {
+  PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
+} from "./SkyHangarUtil"
+
+export type HeldState = "none" | "flyingIn" | "held" | "collecting" | "returningToSky" | "returningToShelf" | "thrown" | "returning" | "resting"
+export type ReleaseTarget = "hangar" | "sky" | "throw" | "shelf"
+
+/** Hooks the main script gives a hangar inspect (the held controller does not know the shelf). */
+export interface InspectHooks {
+  /** World position of the model's shelf slot (also brings its page into view). */
+  slotPos: () => vec3 | null
+  /** World position of the shelf centre, for "released over the shelf". */
+  shelfPos: () => vec3
+  /** Diameter of a model on the shelf, cm (the hand model scales to and from it). */
+  shelfSpanCm: number
+  /** The model is back in its slot. */
+  onReturned: () => void
+  /** The model was sent to the sky (it leaves the collection). */
+  onSentToSky: () => void
+}
+
+const ICON_SKY = requireAsset("../Icons/cloud.png") as Texture
+const ICON_HANGAR = requireAsset("../Icons/warehouse.png") as Texture
+
+interface Pad {
+  root: SceneObject
+  accent: SceneObject
+  content: ElementContent
+  lastTint: number
+  color: vec4
+  alpha: number
+  glow: number
+  over: boolean
+  /** Seconds the held model has stayed inside the capture radius (the pad reacts after PAD_DWELL_SECONDS). */
+  dwell: number
+}
+
+const PAD_DWELL_SECONDS = 0.3
+/** Round glass pads: 10 cm across, 0.8 m ahead, slightly below eye level, Hangar left and Sky right. */
+const PAD_DIAMETER_CM = 10
+const PAD_HIT_SCALE = 1.25 // hit radius = drawn radius x this (must stay <= 1.3)
+/** Longest dimension of the model in the hand, cm (at the hold distance). */
+const HELD_SPAN_PLANE_CM = 15
+const HELD_SPAN_HELI_CM = 12
+const HELD_SPAN_SAT_CM = 10
+/** Rests centred between the two pads (pads are at x +-16 cm at 80 cm; this is at 58 cm), clear of them and of the menu bar. */
+const HAND_OFFSET = new vec3(0, -4, -58)
+const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
+const PAD_OFFSET_SKY = new vec3(16, -5, -80)
+
+@component
+export class SkyHangarHeldController extends BaseScriptComponent {
+  @ui.label('<span style="color: #60A5FA;">SkyHangarHeldController – pull, pads, collect, sky return, throw</span>')
+  @ui.separator
+  @ui.group_start("References")
+  @input
+  @hint("The main camera SceneObject (the user's head)")
+  cameraObject!: SceneObject
+  @input
+  @hint("Sky controller — provides the shared primitive kit and marker positions")
+  sky!: SkyHangarSkyController
+  @ui.group_end
+  @ui.separator
+  @ui.group_start("Settings")
+  @input
+  @hint("Width of the pulled model in cm")
+  @widget(new SliderWidget(10, 40, 1))
+  modelSpanCm: number = 25
+  @input("vec3", "{-9, -21, -48}")
+  @hint("Where the model rests in your hand: x right, y up, z (negative = ahead) from the eyes, cm")
+  handOffset: vec3 = new vec3(-9, -21, -48)
+  @input("vec3", "{11, -24, -50}")
+  @hint("Hangar pad position relative to the eyes (to the right of the hand), cm")
+  padOffset: vec3 = new vec3(11, -24, -50)
+  @input("vec3", "{12, -6, -54}")
+  @hint("Sky return pad position relative to the eyes (above the hangar pad, toward the sky), cm")
+  skyPadOffset: vec3 = new vec3(12, -6, -54)
+  @input
+  @hint("Pad diameter, cm")
+  @widget(new SliderWidget(10, 40, 1))
+  padDiameterCm: number = 20
+  @input
+  @hint("Model counts as 'over a pad' within this distance of its centre, cm")
+  @widget(new SliderWidget(5, 30, 1))
+  padCaptureCm: number = 9
+  @input
+  @hint("Distance from the eyes at which a held model follows your pinch ray, cm")
+  @widget(new SliderWidget(30, 90, 1))
+  holdDistanceCm: number = 58
+  @input
+  @hint("Seconds for the model to slide down from the sky into your hand")
+  @widget(new SliderWidget(0.2, 2, 0.05))
+  flyInSeconds: number = 0.8
+  @input
+  @hint("Seconds for the model to fly back to its place in the sky")
+  @widget(new SliderWidget(0.3, 3, 0.05))
+  skyReturnSeconds: number = 1.1
+  @input
+  @hint("Seconds a thrown model glides along its release direction before curving back")
+  @widget(new SliderWidget(0.8, 4, 0.1))
+  throwSeconds: number = 2
+  @input
+  @hint("Seconds for the curve back to the hand")
+  @widget(new SliderWidget(0.5, 3, 0.1))
+  returnSeconds: number = 1.2
+  @input
+  @hint("Fastest a throw can leave the hand, cm/s")
+  @widget(new SliderWidget(100, 600, 10))
+  throwMaxSpeedCm: number = 350
+  @input("vec4", "{0.45, 0.75, 1.0, 1.0}")
+  @hint("Hangar pad colour (calm accent blue)")
+  @widget(new ColorWidget())
+  hangarPadColor: vec4 = new vec4(0.45, 0.75, 1.0, 1.0)
+  @input("vec4", "{0.85, 0.95, 1.0, 1.0}")
+  @hint("Sky pad colour")
+  @widget(new ColorWidget())
+  skyPadColor: vec4 = new vec4(0.85, 0.95, 1.0, 1.0)
+  @ui.group_end
+
+  private kit!: PartKit
+  private state: HeldState = "none"
+  private info: SkyObjectInfo | null = null
+  private model: BuiltModel | null = null
+  private holder!: SceneObject // collider wrapper (unit scale, identity)
+  private interactable!: Interactable
+  private interactor: Interactor | null = null
+  private t = 0
+  private fromPos = vec3.zero()
+  private fromScale = 1
+  private yawAtPull = 0
+  private spinYaw = 0
+  private spinTarget = 0
+  private samples: {pos: vec3; time: number}[] = []
+  private throwVel = vec3.zero()
+  private throwPos = vec3.zero()
+  private grabT0 = 0
+  private grabDir0 = vec3.forward()
+  private grabPending = false
+  private lastWasScripted = false
+  private inspect: InspectHooks | null = null
+  private overShelf = false
+
+  private hangarPad!: Pad
+  private skyPad!: Pad
+
+  private _onCollected = new Event<SkyObjectInfo>()
+  private _onThrown = new Event<SkyObjectInfo>()
+  private _onReturned = new Event<SkyObjectInfo>()
+  private _onPulled = new Event<SkyObjectInfo>()
+  private _onSentToSky = new Event<SkyObjectInfo>()
+  get onCollected(): PublicApi<SkyObjectInfo> { return this._onCollected.publicApi() }
+  get onThrown(): PublicApi<SkyObjectInfo> { return this._onThrown.publicApi() }
+  get onReturned(): PublicApi<SkyObjectInfo> { return this._onReturned.publicApi() }
+  get onPulled(): PublicApi<SkyObjectInfo> { return this._onPulled.publicApi() }
+  get onSentToSky(): PublicApi<SkyObjectInfo> { return this._onSentToSky.publicApi() }
+
+  onAwake(): void {
+    if (!this.cameraObject || !this.sky) {
+      print("SkyHangarHeldController: required @input not wired")
+      return
+    }
+    this.createEvent("OnStartEvent").bind(() => this.build())
+    this.createEvent("UpdateEvent").bind(() => this.update())
+  }
+
+  // ---------- public API ----------
+  getState(): HeldState { return this.state }
+  getHeldId(): string { return this.info && this.state !== "none" ? this.info.id : "" }
+  getHeldKind(): string { return this.info && this.state !== "none" ? this.info.kind : "" }
+  isPadVisible(): boolean { return this.padVisible(this.hangarPad) }
+  isPadGlowing(): boolean { return this.hangarPad && this.hangarPad.over && this.state === "held" }
+  isSkyPadVisible(): boolean { return this.padVisible(this.skyPad) }
+  isSkyPadGlowing(): boolean { return this.skyPad && this.skyPad.over && this.state === "held" }
+  isRotorSpinning(): boolean { return !!(this.model && this.model.mainRotor && this.state !== "none") }
+  getModelObject(): SceneObject | null { return this.state !== "none" ? this.holder : null }
+  getModelWorldPos(): vec3 { return this.holder.getTransform().getWorldPosition() }
+  getPadWorldPos(): vec3 { return this.hangarPad.root.getTransform().getWorldPosition() }
+  getSkyPadWorldPos(): vec3 { return this.skyPad.root.getTransform().getWorldPosition() }
+  /** Label spot under a pad, on the pad's own axes (centred under it, same rotation). */
+  getPadLabelPose(sky: boolean): {pos: vec3; rot: quat} {
+    const t = (sky ? this.skyPad : this.hangarPad).root.getTransform()
+    const rot = t.getWorldRotation()
+    return {pos: t.getWorldPosition().add(rot.multiplyVec3(new vec3(0, -this.padDiameterCm * 0.6, 0.4))), rot}
+  }
+  getHandWorldPos(): vec3 { return this.handPos(this.yawAtPull) }
+  /** Pad label alpha (0..1) for the UI layer. */
+  getPadAlpha(): number { return this.hangarPad ? this.hangarPad.alpha : 0 }
+
+  /** Start pulling an object out of the sky. interactor may be null for scripted/test pulls. */
+  beginPull(info: SkyObjectInfo, fromWorld: vec3, interactor: Interactor | null): void {
+    if (!this.holder) return
+    this.clearModel()
+    this.resetHeldFlags()
+    this.lastWasScripted = false
+    this.info = info
+    this.interactor = interactor
+    this.modelSpanCm = info.kind === "helicopter" ? HELD_SPAN_HELI_CM : info.kind === "satellite" ? HELD_SPAN_SAT_CM : HELD_SPAN_PLANE_CM
+    const sph = this.holder.getComponent("Physics.ColliderComponent") as ColliderComponent | null
+    if (sph) { const sh = Shape.createSphereShape(); sh.radius = this.modelSpanCm * 0.55; sph.shape = sh }
+    this.yawAtPull = this.camYaw()
+    const visual = makeObj(this.holder, "HeldVisual")
+    this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType)
+    this.holder.enabled = true
+    this.fromPos = fromWorld
+    this.fromScale = 1.6
+    this.t = 0
+    this.spinYaw = 0
+    this.spinTarget = 0
+    this.setState("flyingIn")
+    this._onPulled.invoke(info)
+  }
+
+  /** Scripted pull that ends "held" (no interactor) so tests can then release over/away from a pad. */
+  beginScriptedPull(info: SkyObjectInfo, fromWorld: vec3): void {
+    this.beginPull(info, fromWorld, null)
+    this.lastWasScripted = true
+  }
+
+  /** Pull a model off the hangar shelf into the hand (to inspect it). Same hold / rotate / pad behaviour as a sky pull. */
+  beginInspect(info: SkyObjectInfo, fromWorld: vec3, interactor: Interactor | null, hooks: InspectHooks): void {
+    this.beginPull(info, fromWorld, interactor)
+    this.inspect = hooks
+    this.fromScale = hooks.shelfSpanCm / this.modelSpanCm
+  }
+
+  /** True while the model in the hand came from the hangar shelf. */
+  isInspecting(): boolean { return this.inspect !== null && this.state !== "none" }
+
+  /**
+   * Release the held model. overPad: null = use the real position; true = hangar pad; false = throw;
+   * "sky" = the Sky return pad (tests / automation).
+   */
+  release(overPad: boolean | "sky" | null = null): void {
+    if (this.state !== "held" && this.state !== "flyingIn") return
+    this.interactor = null
+    if (this.state === "flyingIn" && overPad === null) return // let go before arrival: settles into the hand
+    let target: ReleaseTarget
+    if (this.inspect) {
+      // From the hangar: only the Sky pad sends it away; anything else puts it back on the shelf.
+      target = overPad === "sky" || (overPad === null && this.skyPad.over) ? "sky" : overPad === null && this.releaseSpeed() >= 40 ? "throw" : "shelf"
+    } else if (overPad === null) target = this.hangarPad.over ? "hangar" : this.skyPad.over ? "sky" : "throw"
+    else if (overPad === "sky") target = "sky"
+    else target = overPad ? "hangar" : "throw"
+    if (target === "shelf") this.startShelfReturn()
+    else if (target === "hangar") this.startCollect()
+    else if (target === "sky") this.startSkyReturn()
+    else this.startThrow()
+  }
+
+  /** Send whatever model is out (held or resting in the hand) back to the sky — e.g. when released over the Sky return pad. */
+  sendToSky(): boolean {
+    if (this.state === "none" || this.state === "collecting" || this.state === "returningToSky" || this.state === "returningToShelf") return false
+    this.interactor = null
+    this.startSkyReturn()
+    return true
+  }
+
+  /** Programmatically move the held model over the hangar pad (tests / automation). */
+  moveOverPad(): void {
+    if (this.state !== "held") return
+    this.interactor = null
+    this.holder.getTransform().setWorldPosition(this.getPadWorldPos().add(new vec3(0, 6, 0)))
+    this.hangarPad.over = true
+    this.skyPad.over = false
+  }
+
+  /** Programmatically move the held model over the Sky pad (tests / automation). */
+  moveOverSkyPad(): void {
+    if (this.state !== "held") return
+    this.interactor = null
+    this.holder.getTransform().setWorldPosition(this.getSkyPadWorldPos().add(new vec3(0, 3, 3)))
+    this.skyPad.over = true
+    this.hangarPad.over = false
+  }
+
+  // ---------- build ----------
+  private build(): void {
+    this.kit = this.sky.partKit
+    this.handOffset = HAND_OFFSET // the scene still serialises older values
+    this.padDiameterCm = PAD_DIAMETER_CM // the scene still serialises an older, much larger value
+    this.holder = makeObj(this.sceneObject, "HeldModel")
+    const collider = this.holder.createComponent("Physics.ColliderComponent") as ColliderComponent
+    const shape = Shape.createSphereShape()
+    shape.radius = this.modelSpanCm * 0.55
+    collider.shape = shape
+    collider.fitVisual = false
+    this.interactable = this.holder.createComponent(Interactable.getTypeName()) as Interactable
+    this.interactable.onTriggerStart.add((e: InteractorEvent) => this.onGrab(e))
+    this.holder.enabled = false
+    this.hangarPad = this.buildPad("HangarPad", this.hangarPadColor, ICON_HANGAR)
+    this.skyPad = this.buildPad("SkyReturnPad", this.skyPadColor, ICON_SKY)
+  }
+
+  /** Round glass pad in the menu-button style: glass disc, accent disc that lights on hover, the menu bar's icon. */
+  private buildPad(name: string, color: vec4, icon: Texture): Pad {
+    const root = makeObj(this.sceneObject, name)
+    const d = this.padDiameterCm
+    glassPanel(root, "PadGlass", new vec2(d, d), {tint: new vec4(0.5, 0.64, 0.86, 0.55), glow: new vec4(0.8, 0.9, 1, 0.1), edge: PALETTE.glassEdge, edgeCm: 0.15, radiusCm: d})
+    const acc = glassPanel(root, "PadActive", new vec2(d * 1.04, d * 1.04), {tint: new vec4(0.3, 0.62, 1.0, 0.96), glow: new vec4(0.7, 0.88, 1, 0.35), edge: new vec4(1, 1, 1, 0.95), edgeCm: 0.2, radiusCm: d})
+    acc.so.getTransform().setLocalPosition(new vec3(0, 0, 0.04))
+    acc.so.getTransform().setLocalScale(vec3.zero())
+    // Icon built exactly like the menu bar buttons: a Ghost UIKit Button with an ElementContent leading icon.
+    const so = obj(root, "PadIconButton", new vec3(0, 0, 0.1))
+    const btn = so.createComponent(Button.getTypeName()) as Button
+    btn.setVariant({theme: "SnapOS2", shape: "Round", style: "Ghost"})
+    btn.size = new vec3(d, d, 1)
+    const ec = so.createComponent(ElementContent.getTypeName()) as ElementContent
+    ec.leadingIcon = icon
+    ec.iconLayout = "left"
+    ec.leadingIconSize = d * 0.5
+    const ecAny = ec as any
+    ecAny._useThemeColors = false
+    // Pads are display only: the Button must not catch the pinch ray.
+    const col = so.getComponent("Physics.ColliderComponent") as ColliderComponent | null
+    if (col) col.enabled = false
+    const it = so.getComponent(Interactable.getTypeName()) as Interactable | null
+    if (it) it.enabled = false
+    this.tintPad({content: ec, lastTint: -1} as Pad, 0, 0)
+    root.enabled = false
+    return {root, accent: acc.so, content: ec, lastTint: -1, color, alpha: 0, glow: 0, over: false, dwell: 0}
+  }
+
+  /** Icon tint (white, alpha follows the pad's fade; brighter while the held model hovers it). */
+  private tintPad(p: Pad, alpha: number, glow: number): void {
+    const a = Math.round(alpha * (0.85 + 0.15 * glow) * 100) / 100
+    if (a === p.lastTint) return
+    p.lastTint = a
+    const ecAny = p.content as any
+    const t = new vec4(1, 1, 1, a)
+    ecAny._defaultIconTint = t
+    ecAny._hoveredIconTint = t
+    ecAny._triggeredIconTint = t
+    ecAny._inactiveIconTint = t
+    p.content.markColorsDirty()
+  }
+
+  // ---------- helpers ----------
+  private padVisible(p: Pad | undefined): boolean { return !!p && p.root.enabled && p.alpha > 0.05 }
+  private camPos(): vec3 { return this.cameraObject.getTransform().getWorldPosition() }
+  private camForward(): vec3 { return this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1)) }
+  private camYaw(): number { return yawOf(this.camForward()) }
+  private handPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, this.handOffset) }
+  private padPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, PAD_OFFSET_HANGAR) }
+  private skyPadPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, PAD_OFFSET_SKY) }
+  /** Distance from the pad centre to the held model projected onto the pad's own depth (so hold depth does not matter). */
+  private padMiss(model: vec3, pad: vec3): number {
+    const eye = this.camPos()
+    const dir = model.sub(eye).normalize()
+    return eye.add(dir.uniformScale(pad.sub(eye).length)).distance(pad)
+  }
+
+  private rayHoldPoint(it: Interactor): vec3 | null {
+    const s = it.startPoint
+    const d = it.direction
+    if (!s || !d) return null
+    const eye = this.camPos()
+    const far = s.add(d.normalize().uniformScale(200))
+    const dir = far.sub(eye).normalize()
+    return eye.add(dir.uniformScale(this.holdDistanceCm))
+  }
+
+  private setState(s: HeldState): void {
+    this.state = s
+    if (s === "held") this.samples = []
+  }
+
+  /** Everything that must not leak from one hold into the next. */
+  private resetHeldFlags(): void {
+    this.interactor = null
+    this.grabPending = false
+    this.samples = []
+    this.overShelf = false
+    for (const p of [this.hangarPad, this.skyPad]) {
+      if (p) { p.over = false; p.dwell = 0 }
+    }
+  }
+
+  private clearModel(): void {
+    if (this.model && !isNull(this.model.root)) {
+      const v = this.model.root.getParent()
+      if (v && !isNull(v)) v.destroy()
+    }
+    this.model = null
+    this.state = "none"
+    this.inspect = null
+    this.overShelf = false
+    this.interactor = null
+    this.grabPending = false
+    for (const p of [this.hangarPad, this.skyPad]) {
+      if (p) { p.over = false; p.dwell = 0 }
+    }
+    if (this.holder) this.holder.enabled = false
+  }
+
+  private onGrab(e: InteractorEvent): void {
+    if (this.state !== "resting") return
+    this.interactor = e.interactor
+    this.grabT0 = getTime()
+    const d = e.interactor.direction
+    this.grabDir0 = d ? d : vec3.forward()
+    this.grabPending = true
+  }
+
+  private startCollect(): void {
+    this.setState("collecting")
+    this.t = 0
+    this.fromPos = this.holder.getTransform().getWorldPosition()
+  }
+
+  private startSkyReturn(): void {
+    this.setState("returningToSky")
+    this.t = 0
+    this.fromPos = this.holder.getTransform().getWorldPosition()
+  }
+
+  private startShelfReturn(): void {
+    // Released in front of the shelf: a quick settle; anywhere else: a longer glide home.
+    const hooks = this.inspect
+    if (hooks) {
+      const eye = this.camPos()
+      const toModel = this.holder.getTransform().getWorldPosition().sub(eye).normalize()
+      const toShelf = hooks.shelfPos().sub(eye).normalize()
+      this.overShelf = Math.acos(Math.max(-1, Math.min(1, toModel.dot(toShelf)))) / DEG < 16
+    }
+    this.setState("returningToShelf")
+    this.t = 0
+    this.fromPos = this.holder.getTransform().getWorldPosition()
+  }
+
+  /** Release velocity from the last ~0.12 s of hand motion. */
+  private releaseVelocity(): vec3 {
+    const now = getTime()
+    const first = this.samples.find((s) => now - s.time <= 0.12)
+    const last = this.samples[this.samples.length - 1]
+    if (first && last && last.time - first.time > 0.02) return last.pos.sub(first.pos).uniformScale(1 / (last.time - first.time))
+    return vec3.zero()
+  }
+  private releaseSpeed(): number { return this.releaseVelocity().length }
+
+  private startThrow(): void {
+    // A drop with no motion goes straight ahead.
+    let v = this.releaseVelocity()
+    const speed = v.length
+    if (speed < 40) v = this.camForward().uniformScale(120)
+    else if (speed > this.throwMaxSpeedCm) v = v.uniformScale(this.throwMaxSpeedCm / speed)
+    this.throwVel = v
+    this.throwPos = this.holder.getTransform().getWorldPosition()
+    this.yawAtPull = this.camYaw()
+    this.samples = []
+    this.t = 0
+    this.setState("thrown")
+    if (this.info) this._onThrown.invoke(this.info)
+  }
+
+  private updatePad(p: Pad, pos: vec3, rot: quat, want: boolean, dt: number): void {
+    p.alpha += ((want ? 1 : 0) - p.alpha) * clamp01(dt * 6)
+    if (p.alpha < 0.02 && !want) {
+      if (p.root.enabled) p.root.enabled = false
+      p.over = false
+      return
+    }
+    p.root.enabled = true
+    p.root.getTransform().setWorldPosition(pos)
+    p.root.getTransform().setWorldRotation(rot)
+    p.glow += ((p.over ? 1 : 0) - p.glow) * clamp01(dt * 8)
+    this.tintPad(p, p.alpha, p.glow)
+    const g = p.glow
+    p.accent.getTransform().setLocalScale(new vec3(g, g, g))
+    const s = Math.max(0.01, p.alpha) * (1 + 0.1 * p.glow)
+    p.root.getTransform().setLocalScale(new vec3(s, s, s))
+  }
+
+  // ---------- per frame ----------
+  private update(): void {
+    if (!this.holder) return
+    const dt = getDeltaTime()
+    const ht = this.holder.getTransform()
+    const holding = this.state === "flyingIn" || this.state === "held"
+    const yaw = this.yawAtPull
+
+    // Pads: visible only while holding; brighter when the model is over them; fade out after release.
+    // Pads are round glass buttons that face the eyes.
+    const cam = this.camPos()
+    const faceEyes = (at: vec3) => {
+      const toCam = cam.sub(at)
+      return toCam.length > 0.01 ? quat.lookAt(toCam.normalize(), vec3.up()) : quat.quatIdentity()
+    }
+    const hPos = this.padPos(yaw)
+    const sPos = this.skyPadPos(yaw)
+    this.updatePad(this.hangarPad, hPos, faceEyes(hPos), (holding && !this.inspect) || this.state === "collecting", dt)
+    this.updatePad(this.skyPad, sPos, faceEyes(sPos), holding || this.state === "returningToSky", dt)
+
+    if (this.state === "none") return
+    if (this.model) spinRotors(this.model, dt, this.state === "thrown" || this.state === "returning" ? 4 : 2.2)
+    const visual = this.model ? this.model.root.getParent() : null
+
+    switch (this.state) {
+      case "flyingIn": {
+        this.t += dt / this.flyInSeconds
+        const k = easeOutCubic(this.t)
+        const target = this.interactor ? this.rayHoldPoint(this.interactor) ?? this.handPos(yaw) : this.handPos(yaw)
+        ht.setWorldPosition(vec3.lerp(this.fromPos, target, k))
+        const sc = this.fromScale + (1 - this.fromScale) * k
+        if (visual) visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+        this.faceUser(visual, 0)
+        if (this.t >= 1) {
+          if (visual) visual.getTransform().setLocalScale(vec3.one())
+          if (this.interactor && this.interactor.isTriggering) this.setState("held")
+          else if (this.interactor === null && this.lastWasScripted) this.setState("held")
+          else if (this.inspect) this.startShelfReturn()
+          else this.setState("resting")
+        }
+        break
+      }
+      case "held": {
+        if (this.interactor) {
+          if (!this.interactor.isTriggering) {
+            this.release(null)
+            break
+          }
+          const p = this.rayHoldPoint(this.interactor)
+          if (p) ht.setWorldPosition(vec3.lerp(ht.getWorldPosition(), p, clamp01(dt * 18)))
+          if (this.interactor.inputType & (InteractorInputType.LeftHand | InteractorInputType.RightHand)) {
+            const o = this.interactor.orientation
+            if (o) this.spinTarget = yawOf(o.multiplyVec3(new vec3(0, 0, -1))) - yaw
+          }
+          const pos = ht.getWorldPosition()
+          this.samples.push({pos, time: getTime()})
+          if (this.samples.length > 12) this.samples.shift()
+          const capture = this.padDiameterCm * 0.5 * PAD_HIT_SCALE
+          const dH = this.padMiss(pos, this.padPos(yaw))
+          const dS = this.padMiss(pos, this.skyPadPos(yaw))
+          const nearH = !this.inspect && dH < capture && dH <= dS
+          const nearS = dS < capture && dS < dH
+          this.hangarPad.dwell = nearH ? this.hangarPad.dwell + dt : 0
+          this.skyPad.dwell = nearS ? this.skyPad.dwell + dt : 0
+          this.hangarPad.over = this.hangarPad.dwell >= PAD_DWELL_SECONDS
+          this.skyPad.over = this.skyPad.dwell >= PAD_DWELL_SECONDS
+        } else if (!this.lastWasScripted) {
+          this.release(null) // held without a hand to hold it: never stay stuck in "held"
+          break
+        }
+        this.faceUser(visual, dt)
+        break
+      }
+      case "collecting": {
+        this.t += dt / 0.55
+        const k = easeInOut(this.t)
+        ht.setWorldPosition(vec3.lerp(this.fromPos, this.padPos(yaw).add(new vec3(0, 2, 0)), k))
+        const sc = 1 - 0.85 * k
+        if (visual) visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+        if (this.t >= 1) {
+          const info = this.info
+          this.hangarPad.over = false
+          this.clearModel()
+          if (info) this._onCollected.invoke(info)
+        }
+        break
+      }
+      case "returningToSky": {
+        this.t += dt / this.skyReturnSeconds
+        const k = easeInOut(this.t)
+        const info = this.info
+        const home = (info ? this.sky.getMarkerWorldPos(info.id) : null) ?? this.fromPos.add(new vec3(0, 300, -300))
+        // Rise first, then glide home along the sky (back the way it came down).
+        const lift = this.fromPos.add(new vec3(0, 60, 0))
+        const p = bezier3(this.fromPos, lift, vec3.lerp(lift, home, 0.6), home, k)
+        const ahead = bezier3(this.fromPos, lift, vec3.lerp(lift, home, 0.6), home, Math.min(1, k + 0.02))
+        ht.setWorldPosition(p)
+        const sc = 1 - 0.8 * k
+        if (visual) {
+          visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+          const vel = ahead.sub(p)
+          if (vel.length > 0.01) visual.getTransform().setWorldRotation(faceDir(vel))
+        }
+        if (this.t >= 1) {
+          this.skyPad.over = false
+          const hooks = this.inspect
+          this.clearModel()
+          if (info) {
+            this.sky.flashMarker(info.id)
+            this._onSentToSky.invoke(info)
+          }
+          if (hooks) hooks.onSentToSky()
+        }
+        break
+      }
+      case "returningToShelf": {
+        // Glide back to the slot (a short settle when released in front of the shelf) and shrink to shelf size.
+        const hooks = this.inspect
+        const slot = hooks ? hooks.slotPos() : null
+        this.t += dt / (this.overShelf ? 0.45 : 0.9)
+        const k = easeInOut(this.t)
+        const home = slot ?? this.fromPos
+        const lift = this.fromPos.add(new vec3(0, this.overShelf ? 2 : 18, 0))
+        ht.setWorldPosition(bezier3(this.fromPos, lift, vec3.lerp(lift, home, 0.6), home, k))
+        const end = hooks ? hooks.shelfSpanCm / this.modelSpanCm : 0.4
+        const sc = 1 + (end - 1) * k
+        if (visual) visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+        this.faceUser(visual, dt)
+        if (this.t >= 1) {
+          this.clearModel()
+          if (hooks) hooks.onReturned()
+        }
+        break
+      }
+      case "thrown":
+      case "returning": {
+        // Paper-plane glide: keep the release velocity (slowly bleeding speed), then curve back to the hand.
+        const hooks = this.inspect
+        const hand = hooks ? hooks.slotPos() ?? this.handPos(yaw) : this.handPos(yaw) // from the hangar it comes home to its slot
+        const before = ht.getWorldPosition()
+        if (this.state === "thrown") {
+          this.t += dt / this.throwSeconds
+          this.throwVel = this.throwVel.uniformScale(Math.max(0, 1 - 0.25 * dt))
+          this.throwPos = this.throwPos.add(this.throwVel.uniformScale(dt))
+          ht.setWorldPosition(this.throwPos)
+          if (this.t >= 1) {
+            this.setState("returning")
+            this.t = 0
+            this.fromPos = this.throwPos
+          }
+        } else {
+          this.t += dt / this.returnSeconds
+          const k = easeInOut(this.t)
+          const c1 = this.fromPos.add(this.throwVel.uniformScale(0.5)) // keeps heading, then bends toward the hand
+          const c2 = hand.add(this.fromPos.sub(hand).uniformScale(0.25)).add(new vec3(0, 8, 0))
+          ht.setWorldPosition(bezier3(this.fromPos, c1, c2, hand, k))
+          if (hooks && visual) {
+            const sc = 1 + (hooks.shelfSpanCm / this.modelSpanCm - 1) * k
+            visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+          }
+          if (this.t >= 1) {
+            ht.setWorldPosition(hand)
+            if (hooks) {
+              const info = this.info
+              this.clearModel()
+              if (info) this._onReturned.invoke(info)
+              hooks.onReturned()
+              break
+            }
+            this.setState("resting")
+            if (this.info) this._onReturned.invoke(this.info)
+          }
+        }
+        if (visual) {
+          const vel = ht.getWorldPosition().sub(before)
+          if (vel.length > 0.01) visual.getTransform().setWorldRotation(faceDir(vel))
+        }
+        break
+      }
+      case "resting": {
+        const hand = this.handPos(yaw)
+        const bob = Math.sin(getTime() * 2) * 0.6
+        ht.setWorldPosition(vec3.lerp(ht.getWorldPosition(), hand.add(new vec3(0, bob, 0)), clamp01(dt * 6)))
+        this.faceUser(visual, dt)
+        this.updateGrab()
+        break
+      }
+    }
+  }
+
+  private updateGrab(): void {
+    if (!this.grabPending || !this.interactor) return
+    const it = this.interactor
+    const elapsed = getTime() - this.grabT0
+    const d = it.direction
+    const moved = d ? Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(this.grabDir0.normalize())))) / DEG : 0
+    if (!it.isTriggering) {
+      this.grabPending = false
+      this.interactor = null
+      if (elapsed < 0.3 && moved < 3) this.spinTarget += Math.PI / 2 // quick tap turns the model
+      return
+    }
+    if (elapsed >= 0.3 || moved >= 3) {
+      this.grabPending = false
+      this.lastWasScripted = false
+      this.yawAtPull = this.camYaw()
+      this.setState("held")
+    }
+  }
+
+  /** Model faces across the user's view (3/4 view), plus any one-hand turn. */
+  private faceUser(visual: SceneObject | null, dt: number): void {
+    if (!visual) return
+    this.spinYaw += (this.spinTarget - this.spinYaw) * (dt > 0 ? clamp01(dt * 8) : 1)
+    const base = yawRotation(this.yawAtPull + 2.4 + this.spinYaw)
+    const tilt = quat.angleAxis(0.25, vec3.right())
+    visual.getTransform().setWorldRotation(base.multiply(tilt))
+  }
+}
