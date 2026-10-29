@@ -277,16 +277,8 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private onSkyTap(info: SkyObjectInfo): void {
     this.audio.play("tap")
-    // Tap flow: 1st tap pins the route trail, 2nd tap on the same object opens the card, 3rd tap closes it and unpins.
-    if (this.sky.getPinnedId() !== info.id) {
-      if (this.cardId) {
-        this.infoCard.hide()
-        this.cardId = ""
-      }
-      this.sky.setPinnedTrail(info.id)
-      this.log("pin " + info.id)
-      return
-    }
+    // Tap flow: one tap opens the card and pins the trail; tapping the same vehicle again closes both;
+    // tapping another vehicle while a card is open moves the pin and replaces the card.
     if (this.cardId === info.id) {
       this.hideCard()
       return
@@ -492,16 +484,15 @@ export class SkyHangarMain extends BaseScriptComponent {
       this.log("ready: " + this.sky.getMarkerCount() + " sky objects, shelf " + this.shelf.getCount())
     }
 
-    // Hangar name tag: only on hover, or above a model that is held (no permanent plaques).
+    // Hangar info tags: every visible vehicle shows its own tag under it (the held one hides its tag while it is in the hand).
     if (this.mode === "hangar") {
       const heldId = this.held.isInspecting() ? this.held.getHeldId() : ""
-      const heldIdx = heldId ? this.shelf.getVisibleIds().indexOf(heldId) : -1
-      if (heldId && heldIdx >= 0 && (this.held.getState() === "held" || this.held.getState() === "flyingIn")) {
-        this.shelfUI.showTag(heldIdx, this.held.getModelWorldPos().add(new vec3(0, this.held.modelSpanCm * 0.75, 0)))
-      } else if (!heldId) {
-        const hi = this.shelf.getHoverIndex()
-        this.shelfUI.showTag(hi, hi >= 0 ? this.shelf.getStandModelWorldPos(hi).add(new vec3(0, this.shelf.modelSpanCm * 0.75, 0)) : null)
-      } else this.shelfUI.showTag(-1, null)
+      const ids = this.shelf.getVisibleIds()
+      for (let i = 0; i < this.shelfUI.getPlaqueSlotCount(); i++) {
+        if (i < ids.length && ids[i] !== heldId) {
+          this.shelfUI.showTag(i, this.shelf.getStandAnchorWorldPos(i).add(new vec3(0, 7 - this.shelf.modelSpanCm * 0.85, 0)))
+        } else this.shelfUI.showTag(i, null)
+      }
     } else this.shelfUI.showTag(-1, null)
 
     // Trail end labels follow whichever trail is showing (planes: origin + destination codes).
@@ -548,6 +539,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     // Radar range labels while the radar is open
     this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])
 
+    this.sky.assistActive = this.mode === "sky" && this.held.getState() === "none"
     this.pollTapElsewhere()
   }
 
@@ -557,7 +549,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     for (const it of all) {
       const now = it.isTriggering
       const was = this.prevTrigger.get(it) ?? false
-      if (now && !was && it.currentInteractable === null && this.infoCard.isVisible()) {
+      if (now && !was && it.currentInteractable === null && this.infoCard.isVisible() && !this.sky.hasAssistTarget()) {
         this.hideCard()
         this.log("card closed (tap elsewhere)")
       }

@@ -5,7 +5,7 @@
 // States: none -> flyingIn -> held -> (collecting | returningToSky | thrown -> returning -> resting).
 // Inspect from the hangar (beginInspect): a shelf model is pulled into the hand the same way; releasing over the
 // Sky pad sends it to the sky (and out of the collection); a slow release returns it to its shelf slot
-// (state returningToShelf); a flick is thrown like a sky model (thrown -> returning) but curves back to its slot.
+// (state returningToShelf) only if the hand lets go before arrival; any other release is thrown like a sky model (thrown -> returning) but curves back to its slot.
 // While resting the model can be grabbed again (drag to a pad / throw) or quick-tapped to turn it.
 // Expects @inputs: camera object, the sky controller (PartKit + marker positions).
 // Emits onCollected / onThrown / onReturned / onSentToSky. Must not: show text or own the shelf.
@@ -55,6 +55,8 @@ interface Pad {
   over: boolean
   /** Seconds the held model has stayed inside the capture radius (the pad reacts after PAD_DWELL_SECONDS). */
   dwell: number
+  /** Seconds-fraction (0..1) of the one-off confirmation pulse; -1 = idle. */
+  pulse: number
 }
 
 const PAD_DWELL_SECONDS = 0.3
@@ -67,6 +69,16 @@ const HELD_SPAN_HELI_CM = 12
 const HELD_SPAN_SAT_CM = 10
 /** Rests centred between the two pads (pads are at x +-16 cm at 80 cm; this is at 58 cm), clear of them and of the menu bar. */
 const HAND_OFFSET = new vec3(0, -4, -58)
+/** Release motion timings, seconds. Throw total = glide + U-turn return. */
+const THROW_GLIDE_SECONDS = 1.2
+const THROW_RETURN_SECONDS = 2.5
+const SKY_RETURN_SECONDS = 1.5
+const COLLECT_SECONDS = 1.2
+/** Sideways reach of the U-turn control point, cm (gives a turn radius of roughly 0.6 - 1 m). */
+const TURN_WIDTH_CM = 240
+const THROW_MIN_SPEED_CM = 180
+/** Fraction of the release speed still left when the glide hands over to the U-turn. */
+const GLIDE_END_SPEED = 0.35
 const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
 const PAD_OFFSET_SKY = new vec3(16, -5, -80)
 
@@ -161,6 +173,18 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private lastWasScripted = false
   private inspect: InspectHooks | null = null
   private overShelf = false
+  private fromRot = quat.quatIdentity()
+  private collectPulsed = false
+  // throw flight: glide direction / speed, U-turn control points, smoothed heading and bank
+  private throwDir = vec3.forward()
+  private throwSpeed0 = 0
+  private turnC1 = vec3.zero()
+  private turnSide = vec3.right()
+  private heading = quat.quatIdentity()
+  private lastDir = vec3.forward()
+  private bank = 0
+  private rotBlend = 0
+  private fadeMats: {mat: Material; color: vec4}[] = []
 
   private hangarPad!: Pad
   private skyPad!: Pad
@@ -258,13 +282,12 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (this.state === "flyingIn" && overPad === null) return // let go before arrival: settles into the hand
     let target: ReleaseTarget
     if (this.inspect) {
-      // From the hangar: only the Sky pad sends it away; anything else puts it back on the shelf.
-      target = overPad === "sky" || (overPad === null && this.skyPad.over) ? "sky" : overPad === null && this.releaseSpeed() >= 40 ? "throw" : "shelf"
+      // From the hangar: only the Sky pad sends it away; anywhere else is a free throw that glides back to its shelf slot.
+      target = overPad === "sky" || (overPad === null && this.skyPad.over) ? "sky" : "throw"
     } else if (overPad === null) target = this.hangarPad.over ? "hangar" : this.skyPad.over ? "sky" : "throw"
     else if (overPad === "sky") target = "sky"
     else target = overPad ? "hangar" : "throw"
-    if (target === "shelf") this.startShelfReturn()
-    else if (target === "hangar") this.startCollect()
+    if (target === "hangar") this.startCollect()
     else if (target === "sky") this.startSkyReturn()
     else this.startThrow()
   }
@@ -300,6 +323,9 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.kit = this.sky.partKit
     this.handOffset = HAND_OFFSET // the scene still serialises older values
     this.padDiameterCm = PAD_DIAMETER_CM // the scene still serialises an older, much larger value
+    this.throwSeconds = THROW_GLIDE_SECONDS // release timings are fixed here, not by the serialised scene values
+    this.returnSeconds = THROW_RETURN_SECONDS
+    this.skyReturnSeconds = SKY_RETURN_SECONDS
     this.holder = makeObj(this.sceneObject, "HeldModel")
     const collider = this.holder.createComponent("Physics.ColliderComponent") as ColliderComponent
     const shape = Shape.createSphereShape()
@@ -339,7 +365,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (it) it.enabled = false
     this.tintPad({content: ec, lastTint: -1} as Pad, 0, 0)
     root.enabled = false
-    return {root, accent: acc.so, content: ec, lastTint: -1, color, alpha: 0, glow: 0, over: false, dwell: 0}
+    return {root, accent: acc.so, content: ec, lastTint: -1, color, alpha: 0, glow: 0, over: false, dwell: 0, pulse: -1}
   }
 
   /** Icon tint (white, alpha follows the pad's fade; brighter while the held model hovers it). */
@@ -403,6 +429,8 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       if (v && !isNull(v)) v.destroy()
     }
     this.model = null
+    this.fadeMats = []
+    this.rotBlend = 0
     this.state = "none"
     this.inspect = null
     this.overShelf = false
@@ -426,13 +454,42 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private startCollect(): void {
     this.setState("collecting")
     this.t = 0
+    this.collectPulsed = false
     this.fromPos = this.holder.getTransform().getWorldPosition()
+    this.captureRotation()
+    this.prepareFade()
   }
 
   private startSkyReturn(): void {
     this.setState("returningToSky")
     this.t = 0
     this.fromPos = this.holder.getTransform().getWorldPosition()
+    this.captureRotation()
+  }
+
+  private captureRotation(): void {
+    const visual = this.model ? this.model.root.getParent() : null
+    this.fromRot = visual && !isNull(visual) ? visual.getTransform().getWorldRotation() : quat.quatIdentity()
+  }
+
+  /** Give every mesh under the model its own material so the collect fade does not touch the shared colour cache. */
+  private prepareFade(): void {
+    this.fadeMats = []
+    const walk = (so: SceneObject) => {
+      const rmv = so.getComponent("Component.RenderMeshVisual") as RenderMeshVisual | null
+      if (rmv && rmv.mainMaterial) {
+        const m = rmv.mainMaterial.clone()
+        m.mainPass.blendMode = BlendMode.Normal
+        rmv.mainMaterial = m
+        this.fadeMats.push({mat: m, color: m.mainPass.baseColor})
+      }
+      for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
+    }
+    if (this.model && !isNull(this.model.root)) walk(this.model.root)
+  }
+
+  private setFade(alpha: number): void {
+    for (const f of this.fadeMats) f.mat.mainPass.baseColor = new vec4(f.color.x, f.color.y, f.color.z, f.color.w * alpha)
   }
 
   private startShelfReturn(): void {
@@ -463,9 +520,16 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     // A drop with no motion goes straight ahead.
     let v = this.releaseVelocity()
     const speed = v.length
-    if (speed < 40) v = this.camForward().uniformScale(120)
+    if (speed < 40) v = this.camForward().uniformScale(THROW_MIN_SPEED_CM)
     else if (speed > this.throwMaxSpeedCm) v = v.uniformScale(this.throwMaxSpeedCm / speed)
+    else if (speed < THROW_MIN_SPEED_CM) v = v.uniformScale(THROW_MIN_SPEED_CM / speed)
     this.throwVel = v
+    this.throwDir = v.normalize()
+    this.throwSpeed0 = v.length
+    this.captureRotation()
+    this.heading = this.fromRot // start from the pose it has in the hand, then turn smoothly into the flight
+    this.lastDir = this.throwDir
+    this.bank = 0
     this.throwPos = this.holder.getTransform().getWorldPosition()
     this.yawAtPull = this.camYaw()
     this.samples = []
@@ -479,16 +543,21 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (p.alpha < 0.02 && !want) {
       if (p.root.enabled) p.root.enabled = false
       p.over = false
+      p.pulse = -1
       return
     }
     p.root.enabled = true
+    if (p.pulse >= 0) {
+      p.pulse += dt / 0.35
+      if (p.pulse > 1) p.pulse = -1
+    }
     p.root.getTransform().setWorldPosition(pos)
     p.root.getTransform().setWorldRotation(rot)
     p.glow += ((p.over ? 1 : 0) - p.glow) * clamp01(dt * 8)
     this.tintPad(p, p.alpha, p.glow)
     const g = p.glow
     p.accent.getTransform().setLocalScale(new vec3(g, g, g))
-    const s = Math.max(0.01, p.alpha) * (1 + 0.1 * p.glow)
+    const s = Math.max(0.01, p.alpha) * (1 + 0.1 * p.glow) * (p.pulse >= 0 ? 1 + 0.3 * Math.sin(Math.PI * p.pulse) : 1)
     p.root.getTransform().setLocalScale(new vec3(s, s, s))
   }
 
@@ -566,11 +635,36 @@ export class SkyHangarHeldController extends BaseScriptComponent {
         break
       }
       case "collecting": {
-        this.t += dt / 0.55
-        const k = easeInOut(this.t)
-        ht.setWorldPosition(vec3.lerp(this.fromPos, this.padPos(yaw).add(new vec3(0, 2, 0)), k))
-        const sc = 1 - 0.85 * k
-        if (visual) visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+        // ~1.2 s: gentle curve to the hangar icon (ease-in-out), nose toward it; shrink + fade only in the last third.
+        this.t += dt / COLLECT_SECONDS
+        const tt = clamp01(this.t)
+        const k = easeInOut(tt)
+        const padP = this.padPos(yaw)
+        const through = padP.add(padP.sub(cam).normalize().uniformScale(2)) // just past the icon
+        const span = through.sub(this.fromPos)
+        const bendSide = vec3.up().cross(span.length > 0.01 ? span.normalize() : vec3.forward())
+        const bend = bendSide.length > 0.01 ? bendSide.normalize().uniformScale(span.length * 0.18) : vec3.zero()
+        const c1 = this.fromPos.add(span.uniformScale(0.3)).add(bend)
+        const c2 = this.fromPos.add(span.uniformScale(0.7)).add(bend.uniformScale(0.5))
+        const p = bezier3(this.fromPos, c1, c2, through, k)
+        ht.setWorldPosition(p)
+        if (visual) {
+          const g = easeInOut(clamp01((tt - 2 / 3) * 3))
+          const sc = Math.max(0.01, 1 - g)
+          visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+          if (this.info && this.info.kind === "satellite") {
+            visual.getTransform().setWorldRotation(quat.angleAxis(3 * tt * tt, vec3.up()).multiply(this.fromRot))
+          } else {
+            const ahead = bezier3(this.fromPos, c1, c2, through, Math.min(1, k + 0.03))
+            const dir = ahead.sub(p).length > 0.01 ? ahead.sub(p) : span
+            if (dir.length > 0.01) visual.getTransform().setWorldRotation(quat.slerp(this.fromRot, faceDir(dir), easeInOut(clamp01(tt / 0.35))))
+          }
+          this.setFade(1 - g)
+        }
+        if (tt >= 0.8 && !this.collectPulsed) {
+          this.collectPulsed = true
+          this.hangarPad.pulse = 0
+        }
         if (this.t >= 1) {
           const info = this.info
           this.hangarPad.over = false
@@ -593,7 +687,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
         if (visual) {
           visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
           const vel = ahead.sub(p)
-          if (vel.length > 0.01) visual.getTransform().setWorldRotation(faceDir(vel))
+          if (vel.length > 0.01) visual.getTransform().setWorldRotation(quat.slerp(this.fromRot, faceDir(vel), easeOutCubic(clamp01(k / 0.25))))
         }
         if (this.t >= 1) {
           this.skyPad.over = false
@@ -633,21 +727,30 @@ export class SkyHangarHeldController extends BaseScriptComponent {
         const hand = hooks ? hooks.slotPos() ?? this.handPos(yaw) : this.handPos(yaw) // from the hangar it comes home to its slot
         const before = ht.getWorldPosition()
         if (this.state === "thrown") {
+          // Straight glide that eases out: speed falls smoothly from the release speed to GLIDE_END_SPEED of it.
           this.t += dt / this.throwSeconds
-          this.throwVel = this.throwVel.uniformScale(Math.max(0, 1 - 0.25 * dt))
-          this.throwPos = this.throwPos.add(this.throwVel.uniformScale(dt))
+          const left = 1 - clamp01(this.t)
+          const speed = this.throwSpeed0 * (GLIDE_END_SPEED + (1 - GLIDE_END_SPEED) * left * left)
+          this.throwPos = this.throwPos.add(this.throwDir.uniformScale(speed * dt))
           ht.setWorldPosition(this.throwPos)
           if (this.t >= 1) {
             this.setState("returning")
             this.t = 0
             this.fromPos = this.throwPos
+            // Wide U-turn: leave along the glide heading (matching speed), bulge sideways toward the hand's side.
+            let side = vec3.up().cross(this.throwDir)
+            if (side.length < 0.2) side = this.cameraObject.getTransform().getWorldRotation().multiplyVec3(vec3.right())
+            side = side.normalize()
+            this.turnSide = side.uniformScale(side.dot(hand.sub(this.fromPos)) >= 0 ? 1 : -1)
+            const c1Len = Math.max(40, (this.throwSpeed0 * GLIDE_END_SPEED * this.returnSeconds) / 6)
+            this.turnC1 = this.fromPos.add(this.throwDir.uniformScale(c1Len))
           }
         } else {
           this.t += dt / this.returnSeconds
-          const k = easeInOut(this.t)
-          const c1 = this.fromPos.add(this.throwVel.uniformScale(0.5)) // keeps heading, then bends toward the hand
-          const c2 = hand.add(this.fromPos.sub(hand).uniformScale(0.25)).add(new vec3(0, 8, 0))
-          ht.setWorldPosition(bezier3(this.fromPos, c1, c2, hand, k))
+          const u = clamp01(this.t)
+          const k = 1 - (1 - u) * (1 - u) // starts at the glide speed, settles into the hand
+          const c2 = hand.add(this.turnSide.uniformScale(TURN_WIDTH_CM))
+          ht.setWorldPosition(bezier3(this.fromPos, this.turnC1, c2, hand, k))
           if (hooks && visual) {
             const sc = 1 + (hooks.shelfSpanCm / this.modelSpanCm - 1) * k
             visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
@@ -661,14 +764,12 @@ export class SkyHangarHeldController extends BaseScriptComponent {
               hooks.onReturned()
               break
             }
+            this.rotBlend = 1.2 // ease into the resting pose instead of snapping
             this.setState("resting")
             if (this.info) this._onReturned.invoke(this.info)
           }
         }
-        if (visual) {
-          const vel = ht.getWorldPosition().sub(before)
-          if (vel.length > 0.01) visual.getTransform().setWorldRotation(faceDir(vel))
-        }
+        if (visual) this.flyRotation(visual, ht.getWorldPosition().sub(before), dt)
         break
       }
       case "resting": {
@@ -702,12 +803,32 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     }
   }
 
+  /** Nose along the direction of travel (smoothed), banking gently into the turn like a paper plane. */
+  private flyRotation(visual: SceneObject, step: vec3, dt: number): void {
+    if (dt <= 0 || step.length < 0.01) {
+      visual.getTransform().setWorldRotation(this.heading.multiply(quat.angleAxis(this.bank, new vec3(0, 0, 1))))
+      return
+    }
+    const d = step.normalize()
+    const yawRate = Math.atan2(this.lastDir.x * d.z - this.lastDir.z * d.x, this.lastDir.x * d.x + this.lastDir.z * d.z) / dt
+    this.lastDir = d
+    const bankTarget = Math.max(-0.6, Math.min(0.6, -yawRate * 0.35))
+    this.bank += (bankTarget - this.bank) * clamp01(dt * 4)
+    this.heading = quat.slerp(this.heading, faceDir(d), clamp01(dt * 8))
+    visual.getTransform().setWorldRotation(this.heading.multiply(quat.angleAxis(this.bank, new vec3(0, 0, 1))))
+  }
+
   /** Model faces across the user's view (3/4 view), plus any one-hand turn. */
   private faceUser(visual: SceneObject | null, dt: number): void {
     if (!visual) return
     this.spinYaw += (this.spinTarget - this.spinYaw) * (dt > 0 ? clamp01(dt * 8) : 1)
     const base = yawRotation(this.yawAtPull + 2.4 + this.spinYaw)
     const tilt = quat.angleAxis(0.25, vec3.right())
-    visual.getTransform().setWorldRotation(base.multiply(tilt))
+    const target = base.multiply(tilt)
+    const vt = visual.getTransform()
+    if (this.rotBlend > 0 && dt > 0) {
+      this.rotBlend -= dt
+      vt.setWorldRotation(quat.slerp(vt.getWorldRotation(), target, clamp01(dt * 6)))
+    } else vt.setWorldRotation(target)
   }
 }

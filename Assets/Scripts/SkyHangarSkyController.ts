@@ -8,7 +8,8 @@
 
 import {Interactable} from "SpectaclesInteractionKit.lspkg/Components/Interaction/Interactable/Interactable"
 import {InteractorEvent} from "SpectaclesInteractionKit.lspkg/Core/Interactor/InteractorEvent"
-import {Interactor} from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
+import {Interactor, InteractorInputType} from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
+import {SIK} from "SpectaclesInteractionKit.lspkg/SIK"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {AIRPORTS, SKY_OBJECTS, SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
@@ -60,9 +61,24 @@ const SOLID_SEGMENTS = 96
 const DOT_SPACING_DEG = 1.2
 const DOT_SIZE_DEG = 0.35
 const DOT_POOL = 160 // 1.2 degree spacing over up to ~190 degrees of sky
-const ALL_ROUTE_CHORDS = 28 // chords per vehicle in the "All routes" overview lines
-const ALL_ROUTE_ALPHA = 0.28
-const ALL_ROUTE_WIDTH = 0.45 // fraction of the full trail width
+const ALL_ROUTE_SEGMENTS = 64 // solid chords per vehicle in "All routes" mode (same look as the pinned trail)
+const ALL_ROUTE_ALPHA = 0.55 // fraction of the pinned trail's opacity
+
+/** One drawable trail: solid-behind segments + dotted-ahead spheres + shared gradient materials. */
+interface TrailSet {
+  root: SceneObject
+  solid: Seg[]
+  dots: Seg[]
+  mats: Material[]
+  alphaScale: number
+  segPts: vec3[]
+  segCut: boolean[]
+  dotS: number[]
+  dotCount: number
+  origin: vec3
+  dest: vec3
+  points: number
+}
 
 @component
 export class SkyHangarSkyController extends BaseScriptComponent {
@@ -138,6 +154,14 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   @widget(new SliderWidget(1, 15, 0.5))
   dragStartDeg: number = 3
   @input
+  @hint("A pinch must be held this long (s) before it can turn into a pull, so a normal tap is never read as a drag")
+  @widget(new SliderWidget(0.05, 0.5, 0.01))
+  dragDelaySeconds: number = 0.15
+  @input
+  @hint("Aim assist: the vehicle nearest the gaze within this angle (deg) is aimed, and a pinch that hits nothing taps it")
+  @widget(new SliderWidget(0, 6, 0.5))
+  aimAssistDeg: number = 3
+  @input
   @hint("Show a faint dashed horizon ring so the stand-in sky reads clearly in preview")
   showHorizonRing: boolean = true
   @ui.group_end
@@ -145,27 +169,24 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   private kit!: PartKit
   private markers: Marker[] = []
   private markerById: {[id: string]: Marker} = {}
-  private trailRoot!: SceneObject
-  private trailSolid: Seg[] = []
-  private trailDots: Seg[] = []
-  private trailMats: Material[] = [] // shared alpha-level materials (one gradient, no per-segment clones)
+  private main!: TrailSet // the pinned / aimed full trail
   private trailId = ""
-  private trailPoints = 0
   private pinnedId = ""
   private allRoutes = false
   private routesRoot: SceneObject | null = null
-  private routeLines: {[id: string]: SceneObject[]} = {}
+  private routeSets: {[id: string]: TrailSet} = {}
   private aimedId = ""
-  private trailOrigin = vec3.zero() // sky-local (the dome follows the camera position)
-  private trailDest = vec3.zero()
-  private segPts: vec3[] = [] // sky-local chord endpoints of the fixed solid segments (SOLID_SEGMENTS + 1)
-  private segCut: boolean[] = [] // segment currently shortened at the glyph
-  private dotS: number[] = [] // fixed arc position (radians along the route) of every dot
-  private dotCount = 0
   private reticle!: SceneObject
   private reticleMat!: Material
   private pending: {m: Marker; interactor: Interactor; t0: number; dir0: vec3} | null = null
   private built = false
+  private rayHover: {[id: string]: Interactor | null} = {}
+  private simAim = false
+  private lostAt = -1
+  private prevTrig = new Map<Interactor, boolean>()
+  private retPos: vec3 | null = null
+  /** Set false while the sky is not the active view or a model is in the hand (the main script drives this). */
+  assistActive = true
 
   private _onAim = new Event<SkyObjectInfo | null>()
   private _onTap = new Event<SkyObjectInfo>()
@@ -204,13 +225,15 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   /** Angular radius of the (larger) pinch target, degrees. */
   getMarkerTargetAngularRadiusDeg(): number { return Math.atan(this.targetRadiusCm / this.skyDomeRadiusCm) / DEG }
   getAimedId(): string { return this.aimedId }
+  /** True when a pinch that hits nothing would still tap the selected vehicle (aim assist). */
+  hasAssistTarget(): boolean { return this.assistActive && this.aimedId !== "" }
   isAimReticleVisible(): boolean { return this.reticle ? this.reticle.enabled : false }
   getTrailFlightId(): string { return this.trailId }
   isTrailVisible(): boolean { return this.trailId !== "" }
-  getTrailOriginPos(): vec3 { return this.sceneObject.getTransform().getWorldPosition().add(this.trailOrigin) }
-  getTrailDestPos(): vec3 { return this.sceneObject.getTransform().getWorldPosition().add(this.trailDest) }
+  getTrailOriginPos(): vec3 { return this.sceneObject.getTransform().getWorldPosition().add(this.main.origin) }
+  getTrailDestPos(): vec3 { return this.sceneObject.getTransform().getWorldPosition().add(this.main.dest) }
   /** Number of sky-path points drawn for the current trail (past + ahead). */
-  getTrailPointCount(): number { return this.trailId ? this.trailPoints : 0 }
+  getTrailPointCount(): number { return this.trailId ? this.main.points : 0 }
   /** True when the current trail includes a path ahead to a destination airport (planes only). */
   trailHasLandingPath(): boolean {
     const m = this.trailId ? this.markerById[this.trailId] : null
@@ -228,7 +251,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   }
   getPinnedId(): string { return this.pinnedId }
   isAllRoutes(): boolean { return this.allRoutes }
-  /** Show a thin, faint route line for every vehicle (the pinned one keeps its full trail). */
+  /** Show every vehicle's route in the pinned-trail style, slightly fainter (the pinned one keeps its full trail). */
   setAllRoutes(on: boolean): void {
     this.allRoutes = on
     if (on && !this.routesRoot && this.built) this.buildAllRoutes()
@@ -236,6 +259,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   }
   /** Test/automation hook: simulate aiming at an object ("" = aim at nothing). */
   simulateAim(id: string): void {
+    this.simAim = id !== ""
     for (const m of this.markers) m.hovered = m.info.id === id
     this.aimedId = id
     this.refreshTrail()
@@ -256,7 +280,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.sceneObject.getTransform().setWorldRotation(quat.quatIdentity())
     const objectsRoot = makeObj(this.sceneObject, "SkyObjects")
     for (const info of SKY_OBJECTS) this.buildMarker(objectsRoot, info)
-    this.buildTrailPool()
+    this.main = this.makeTrailSet(this.sceneObject, "Trail", SOLID_SEGMENTS, DOT_POOL, 1)
     if (this.allRoutes) this.buildAllRoutes()
     this.buildReticle()
     if (this.showHorizonRing) this.buildHorizon()
@@ -297,53 +321,42 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.markers.push(m)
     this.markerById[info.id] = m
 
-    interactable.onHoverEnter.add(() => {
-      m.hovered = true
-      this.aimedId = info.id
-      this.refreshTrail()
-      this._onAim.invoke(info)
-    })
-    interactable.onHoverExit.add(() => {
-      m.hovered = false
-      if (this.aimedId === info.id) {
-        this.aimedId = ""
-        this.refreshTrail()
-        this._onAim.invoke(null)
-      }
-    })
+    // Selection (aimedId) is decided per frame in updateSelection, with hysteresis; these only report what the ray hits.
+    interactable.onHoverEnter.add((e: InteractorEvent) => { this.rayHover[info.id] = e.interactor })
+    interactable.onHoverExit.add(() => { this.rayHover[info.id] = null })
     interactable.onTriggerStart.add((e: InteractorEvent) => {
       const d = e.interactor.direction
       this.pending = {m, interactor: e.interactor, t0: getTime(), dir0: d ? d : vec3.forward()}
     })
   }
 
-  private buildTrailPool(): void {
-    this.trailRoot = makeObj(this.sceneObject, "Trail")
-    for (let l = 0; l < TRAIL.levels; l++) this.trailMats.push(this.kit.uniqueUnlit(new vec4(this.trailTint.x, this.trailTint.y, this.trailTint.z, (l + 1) / TRAIL.levels)))
-    const mk = (name: string, mesh: RenderMesh): Seg => {
-      const obj = this.kit.part(this.trailRoot, name, mesh, this.trailMats[0], vec3.zero(), new vec3(1, 1, 1))
+  private makeTrailSet(parent: SceneObject, name: string, solidN: number, dotN: number, alphaScale: number): TrailSet {
+    const root = makeObj(parent, name)
+    const mats: Material[] = []
+    for (let l = 0; l < TRAIL.levels; l++) mats.push(this.kit.uniqueUnlit(new vec4(this.trailTint.x, this.trailTint.y, this.trailTint.z, ((l + 1) / TRAIL.levels) * alphaScale)))
+    const mk = (n: string, mesh: RenderMesh): Seg => {
+      const obj = this.kit.part(root, n, mesh, mats[0], vec3.zero(), new vec3(1, 1, 1))
       return {obj, rmv: obj.getChild(0).getComponent("Component.RenderMeshVisual") as RenderMeshVisual, level: -1}
     }
-    for (let i = 0; i < SOLID_SEGMENTS; i++) this.trailSolid.push(mk("TrailSolid_" + i, this.kit.box))
-    for (let i = 0; i < DOT_POOL; i++) this.trailDots.push(mk("TrailDot_" + i, this.kit.sphere))
-    this.trailRoot.enabled = false
+    const solid: Seg[] = []
+    const dots: Seg[] = []
+    for (let i = 0; i < solidN; i++) solid.push(mk("TrailSolid_" + i, this.kit.box))
+    for (let i = 0; i < dotN; i++) dots.push(mk("TrailDot_" + i, this.kit.sphere))
+    root.enabled = false
+    return {root, solid, dots, mats, alphaScale, segPts: [], segCut: [], dotS: [], dotCount: 0, origin: vec3.zero(), dest: vec3.zero(), points: 0}
   }
 
-  /** Static, faint great-circle lines for every vehicle, built once; the full trail replaces the line of the trailed one. */
+  /** A fainter copy of the full trail (solid behind, dotted ahead, same gradient and width) for every vehicle, built once. */
   private buildAllRoutes(): void {
     const root = makeObj(this.sceneObject, "AllRoutes")
     this.routesRoot = root
-    const r = this.skyDomeRadiusCm
-    const W = STROKE.at(r) * (TRAIL.widthMm / 1.5) * ALL_ROUTE_WIDTH
     for (const m of this.markers) {
-      const c = this.getMarkerColor(m.info.kind)
-      const mat = this.kit.uniqueUnlit(new vec4(c.x, c.y, c.z, ALL_ROUTE_ALPHA))
-      const pts = sampleRange(m.full, m.cum, 0, m.cum[m.cum.length - 1], ALL_ROUTE_CHORDS).map((d) => d.uniformScale(r))
-      const holder = makeObj(root, "Route_" + m.info.id)
-      for (let j = 0; j < ALL_ROUTE_CHORDS; j++) {
-        this.placeSegment(this.kit.part(holder, "Seg_" + j, this.kit.box, mat, vec3.zero(), new vec3(1, 1, 1)), pts[j], pts[j + 1], W)
-      }
-      this.routeLines[m.info.id] = [holder]
+      const total = m.cum[m.cum.length - 1]
+      const dotN = m.info.kind === "plane" ? Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG))) : 0
+      const t = this.makeTrailSet(root, "Route_" + m.info.id, ALL_ROUTE_SEGMENTS, dotN, ALL_ROUTE_ALPHA)
+      this.routeSets[m.info.id] = t
+      this.layoutTrail(t, m)
+      t.root.enabled = true
     }
     this.updateAllRoutesVisibility()
   }
@@ -351,7 +364,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   private updateAllRoutesVisibility(): void {
     if (!this.routesRoot) return
     this.routesRoot.enabled = this.allRoutes
-    for (const id in this.routeLines) this.routeLines[id][0].enabled = id !== this.trailId
+    for (const id in this.routeSets) this.routeSets[id].root.enabled = id !== this.trailId
   }
 
   /** Four thin corner brackets around the aimed object, facing the user. */
@@ -407,7 +420,8 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     m.wrapper.getTransform().setLocalPosition(dir.uniformScale(this.skyDomeRadiusCm))
     if (m.info.kind === "satellite") tan = new vec3(0, 1, 0).sub(dir.uniformScale(dir.y)).normalize()
     m.visual.getTransform().setLocalRotation(quat.lookAt(dir.uniformScale(-1), tan))
-    if (this.trailId === m.info.id) this.updateTrail(m)
+    if (this.trailId === m.info.id) this.updateTrail(this.main, m)
+    else if (this.allRoutes && this.routeSets[m.info.id]) this.updateTrail(this.routeSets[m.info.id], m)
   }
 
   /** Lay a box segment from a to b (sky-local; the trail root sits at the sky origin, unrotated). */
@@ -422,15 +436,15 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   }
 
   /** Shared gradient materials re-tinted for the object being aimed at (alpha per level is fixed). */
-  private tintTrail(c: vec4): void {
-    for (let l = 0; l < this.trailMats.length; l++) this.trailMats[l].mainPass.baseColor = new vec4(c.x, c.y, c.z, (l + 1) / this.trailMats.length)
+  private tintTrail(t: TrailSet, c: vec4): void {
+    for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(c.x, c.y, c.z, ((l + 1) / t.mats.length) * t.alphaScale)
   }
-  private setLevel(s: Seg, alpha: number): void {
-    const n = this.trailMats.length
+  private setLevel(t: TrailSet, s: Seg, alpha: number): void {
+    const n = t.mats.length
     const lv = Math.max(0, Math.min(n - 1, Math.round(alpha * n) - 1))
     if (s.level !== lv) {
       s.level = lv
-      s.rmv.mainMaterial = this.trailMats[lv]
+      s.rmv.mainMaterial = t.mats[lv]
     }
   }
   private show(s: Seg, on: boolean): void {
@@ -443,104 +457,106 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const m = id ? this.markerById[id] : null
     if (!m || m.past.length < 2) {
       this.trailId = ""
-      this.trailPoints = 0
-      if (this.trailRoot) this.trailRoot.enabled = false
+      this.main.points = 0
+      this.main.root.enabled = false
       this.updateAllRoutesVisibility()
       return
     }
-    if (this.trailId !== m.info.id || !this.trailRoot.enabled) {
+    if (this.trailId !== m.info.id || !this.main.root.enabled) {
       this.trailId = m.info.id
-      this.trailRoot.enabled = true
-      this.layoutTrail(m)
+      this.main.root.enabled = true
+      this.layoutTrail(this.main, m)
     }
     this.updateAllRoutesVisibility()
   }
 
   /** Fixed trail geometry along the route, built when a trail is shown. Nothing here depends on the vehicle's position. */
-  private layoutTrail(m: Marker): void {
+  private layoutTrail(t: TrailSet, m: Marker): void {
     const r = this.skyDomeRadiusCm
     const kind = m.info.kind
     const toLocal = (d: vec3) => d.uniformScale(r)
     const W = STROKE.at(r) * (TRAIL.widthMm / 1.5)
     const total = m.cum[m.cum.length - 1]
-    this.trailPoints = m.past.length + m.ahead.length
-    this.trailOrigin = toLocal(m.full[0])
-    this.tintTrail(kind === "satellite" ? this.satelliteCyan : kind === "helicopter" ? this.helicopterColor : this.trailAccent(m.info))
+    const n = t.solid.length
+    t.points = m.past.length + m.ahead.length
+    t.origin = toLocal(m.full[0])
+    this.tintTrail(t, kind === "satellite" ? this.satelliteCyan : kind === "helicopter" ? this.helicopterColor : this.trailAccent(m.info))
 
     // Solid line: SOLID_SEGMENTS equal chords on the route, placed once.
-    this.segPts = sampleRange(m.full, m.cum, 0, total, SOLID_SEGMENTS).map(toLocal)
-    this.segCut = []
-    for (let j = 0; j < SOLID_SEGMENTS; j++) {
-      this.placeSegment(this.trailSolid[j].obj, this.segPts[j], this.segPts[j + 1], W)
-      this.segCut.push(false)
-      this.trailSolid[j].level = -1
-      this.trailSolid[j].obj.enabled = false
+    t.segPts = sampleRange(m.full, m.cum, 0, total, n).map(toLocal)
+    t.segCut = []
+    for (let j = 0; j < n; j++) {
+      this.placeSegment(t.solid[j].obj, t.segPts[j], t.segPts[j + 1], W)
+      t.segCut.push(false)
+      t.solid[j].level = -1
+      t.solid[j].obj.enabled = false
     }
 
     // Dots (planes only): fixed arc positions every DOT_SPACING_DEG from the route start. Everything sits on the
     // dome, so equal arc = equal viewing angle; each dot is DOT_SIZE_DEG across.
-    this.dotS = []
-    this.dotCount = 0
+    t.dotS = []
+    t.dotCount = 0
     if (kind === "plane") {
-      this.dotCount = Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG)))
+      t.dotCount = Math.min(t.dots.length, Math.floor(total / (DOT_SPACING_DEG * DEG)))
       const dotCm = r * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2)
-      for (let k = 0; k < this.dotCount; k++) {
+      for (let k = 0; k < t.dotCount; k++) {
         const sk = (k + 1) * DOT_SPACING_DEG * DEG
-        this.dotS.push(sk)
-        const d = this.trailDots[k]
+        t.dotS.push(sk)
+        const d = t.dots[k]
         d.level = -1
         d.obj.getTransform().setLocalPosition(toLocal(pointAt(m.full, m.cum, sk)))
         d.obj.getTransform().setLocalScale(new vec3(dotCm, dotCm, dotCm))
       }
     }
-    for (let k = this.dotCount; k < DOT_POOL; k++) this.trailDots[k].obj.enabled = false
-    this.trailDest = kind === "helicopter" ? this.trailOrigin : toLocal(m.full[m.full.length - 1])
-    this.updateTrail(m)
+    for (let k = t.dotCount; k < t.dots.length; k++) t.dots[k].obj.enabled = false
+    t.dest = kind === "helicopter" ? t.origin : toLocal(m.full[m.full.length - 1])
+    this.updateTrail(t, m)
   }
 
   /** Per frame: only opacity (and the segment ending at the glyph) changes; line and dots stay where they are. */
-  private updateTrail(m: Marker): void {
+  private updateTrail(t: TrailSet, m: Marker): void {
     const r = this.skyDomeRadiusCm
     const kind = m.info.kind
     const total = m.cum[m.cum.length - 1]
     const s = m.s
     const fade = (u: number) => 0.03 + 0.97 * Math.pow(1 - Math.min(1, Math.max(0, u)), 1.6)
-    const step = total / SOLID_SEGMENTS
+    const n = t.solid.length
+    const step = total / n
     const W = STROKE.at(r) * (TRAIL.widthMm / 1.5)
 
     if (kind === "satellite") {
       // Orbit arc through the satellite, fading both ways.
       const fsat = s / Math.max(total, 1e-6)
-      for (let j = 0; j < SOLID_SEGMENTS; j++) {
-        const u = (j + 0.5) / SOLID_SEGMENTS
+      for (let j = 0; j < n; j++) {
+        const u = (j + 0.5) / n
         const d = u < fsat ? (fsat - u) / Math.max(fsat, 1e-6) : (u - fsat) / Math.max(1 - fsat, 1e-6)
-        this.show(this.trailSolid[j], true)
-        this.setLevel(this.trailSolid[j], TRAIL.peakBehind * 0.8 * fade(d))
+        this.show(t.solid[j], true)
+        this.setLevel(t, t.solid[j], TRAIL.peakBehind * 0.8 * fade(d))
       }
       return
     }
 
     // Behind: solid, from the route start up to just outside the glyph, fading toward the origin.
     const end = s - TRAIL.gapFromGlyphCm / r
-    for (let j = 0; j < SOLID_SEGMENTS; j++) {
-      const seg = this.trailSolid[j]
+    for (let j = 0; j < n; j++) {
+      const seg = t.solid[j]
       const a = j * step, b = a + step
       if (a >= end) { this.show(seg, false); continue }
       const cut = b > end
-      if (cut) this.placeSegment(seg.obj, this.segPts[j], pointAt(m.full, m.cum, end).uniformScale(r), W)
-      else if (this.segCut[j]) this.placeSegment(seg.obj, this.segPts[j], this.segPts[j + 1], W)
-      this.segCut[j] = cut
+      if (cut) this.placeSegment(seg.obj, t.segPts[j], pointAt(m.full, m.cum, end).uniformScale(r), W)
+      else if (t.segCut[j]) this.placeSegment(seg.obj, t.segPts[j], t.segPts[j + 1], W)
+      t.segCut[j] = cut
       this.show(seg, true)
-      this.setLevel(seg, TRAIL.peakBehind * fade((s - (a + Math.min(b, end)) / 2) / Math.max(s, 1e-6)))
+      this.setLevel(t, seg, TRAIL.peakBehind * fade((s - (a + Math.min(b, end)) / 2) / Math.max(s, 1e-6)))
     }
 
     // Ahead: dots at fixed positions, fading toward the destination; the vehicle flies through them.
-    for (let k = 0; k < this.dotCount; k++) {
-      const d = this.trailDots[k]
-      const sk = this.dotS[k]
+    for (let k = 0; k < t.dotCount; k++) {
+      const d = t.dots[k]
+      const sk = t.dotS[k]
       if (sk <= s) { this.show(d, false); continue }
       this.show(d, true)
-      this.setLevel(d, TRAIL.peakAhead * fade((sk - s) / Math.max(total - s, 1e-6)))
+      this.setLevel(t, d, TRAIL.peakAhead * fade((sk - s) / Math.max(total - s, 1e-6)))
     }
   }
 
@@ -570,11 +586,16 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       }
       if (m.info.kind === "helicopter") spinGlyphRotor(m.glyph, dt, 0.8)
     }
-    // Aim reticle: corner brackets around the aimed object only.
+    this.updateSelection(camPos)
+    this.pollAssistPinch()
+    // Aim reticle: corner brackets around the aimed object only (gentle magnet when it moves to a new target).
     const aimed = this.aimedId || this.pinnedId ? this.markerById[this.aimedId || this.pinnedId] : null
     if (aimed) {
+      const wasOn = this.reticle.enabled
       this.reticle.enabled = true
-      const p = aimed.wrapper.getTransform().getWorldPosition()
+      const target = aimed.wrapper.getTransform().getWorldPosition()
+      this.retPos = wasOn && this.retPos ? vec3.lerp(this.retPos, target, clamp01(dt * 14)) : target
+      const p = this.retPos
       const rt = this.reticle.getTransform()
       rt.setWorldPosition(p)
       const toUser = camPos.sub(p).normalize()
@@ -585,6 +606,70 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.updatePending()
   }
 
+  private angleTo(m: Marker, origin: vec3, dir: vec3): number {
+    const v = m.wrapper.getTransform().getWorldPosition().sub(origin).normalize()
+    return Math.acos(Math.max(-1, Math.min(1, v.dot(dir.normalize())))) / DEG
+  }
+
+  /** Switching away from the current selection needs the newcomer to be this much closer (deg) to the pointer. */
+  private static readonly SWITCH_MARGIN_DEG = 0.8
+  /** The selection survives this long (s) after the pointer leaves it. */
+  private static readonly KEEP_SECONDS = 0.3
+
+  /**
+   * Decides aimedId each frame: the vehicle under the pinch ray, else (aim assist) the one nearest the gaze within aimAssistDeg.
+   * Hysteresis: a switch needs the new vehicle to be clearly closer than the old one, and a lost target is kept for KEEP_SECONDS.
+   */
+  private updateSelection(camPos: vec3): void {
+    if (this.simAim) return
+    let cands: {m: Marker; ang: number}[] = []
+    for (const m of this.markers) {
+      const it = this.rayHover[m.info.id]
+      const d = it ? it.direction : null
+      const o = it ? it.startPoint : null
+      if (it && d && o) cands.push({m, ang: this.angleTo(m, o, d)})
+    }
+    if (cands.length === 0 && this.assistActive && this.aimAssistDeg > 0) {
+      const fwd = this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1))
+      for (const m of this.markers) {
+        const ang = this.angleTo(m, camPos, fwd)
+        if (ang < this.aimAssistDeg) cands.push({m, ang})
+      }
+    }
+    let best: {m: Marker; ang: number} | null = null
+    for (const c of cands) if (!best || c.ang < best.ang) best = c
+    const cur = this.aimedId ? cands.find((c) => c.m.info.id === this.aimedId) ?? null : null
+    let want = this.aimedId
+    if (best) {
+      this.lostAt = -1
+      if (!this.aimedId || !cur) want = best.m.info.id
+      else if (best.m.info.id !== this.aimedId && best.ang < cur.ang - SkyHangarSkyController.SWITCH_MARGIN_DEG) want = best.m.info.id
+    } else if (this.aimedId) {
+      if (this.lostAt < 0) this.lostAt = getTime()
+      if (getTime() - this.lostAt >= SkyHangarSkyController.KEEP_SECONDS) { want = ""; this.lostAt = -1 }
+    }
+    if (want === this.aimedId) return
+    for (const m of this.markers) m.hovered = m.info.id === want
+    this.aimedId = want
+    this.refreshTrail()
+    this._onAim.invoke(want ? this.getInfo(want) : null)
+  }
+
+  /** Per-frame: a fresh pinch that hits no vehicle taps / pulls the currently selected one (aim assist and hysteresis). */
+  private pollAssistPinch(): void {
+    const all = SIK.InteractionManager.getInteractorsByType(InteractorInputType.All)
+    for (const it of all) {
+      const now = it.isTriggering
+      const was = this.prevTrig.get(it) ?? false
+      if (now && !was && this.assistActive && !this.pending && it.currentInteractable === null && this.aimedId) {
+        const m = this.markerById[this.aimedId]
+        const d = it.direction
+        if (m) this.pending = {m, interactor: it, t0: getTime(), dir0: d ? d : vec3.forward()}
+      }
+      this.prevTrig.set(it, now)
+    }
+  }
+
   private updatePending(): void {
     const p = this.pending
     if (!p) return
@@ -593,11 +678,12 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const moved = d ? Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(p.dir0.normalize())))) / DEG : 0
     if (!p.interactor.isTriggering) {
       this.pending = null
-      if (elapsed < this.tapMaxSeconds && moved < this.dragStartDeg) this._onTap.invoke(p.m.info)
+      if (elapsed < this.tapMaxSeconds && (moved < this.dragStartDeg || elapsed < this.dragDelaySeconds)) this._onTap.invoke(p.m.info)
       else this.firePull(p.m, p.interactor) // a slow release is still a pull
       return
     }
-    if (elapsed >= this.tapMaxSeconds || moved >= this.dragStartDeg) {
+    // A drag needs both a short hold and a little movement; holding still for tapMaxSeconds also starts the pull.
+    if (elapsed >= this.tapMaxSeconds || (elapsed >= this.dragDelaySeconds && moved >= this.dragStartDeg)) {
       this.pending = null
       this.firePull(p.m, p.interactor)
     }

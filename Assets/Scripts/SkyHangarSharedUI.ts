@@ -7,6 +7,7 @@
 // built on UIKit's RoundedRectangle visual. Plain module, no component.
 // Must not: hold state. Non-UI scripts may import only the plain tokens (STROKE, MARK, TEXT).
 
+import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import {FlexItem} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexItem"
 import {FlexAlign, FlexAlignSelf, FlexDirection, FlexJustify} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexTypes"
@@ -128,6 +129,23 @@ export const RADIUS = {s: 0.8, m: 1.6, l: 2.6, pill: 99}
 
 export const LAYOUT_Z_LIFT = 0.02
 export const BUTTON_LABEL_Z = 0.08
+
+/** Smallest hit area (cm) of any tappable control: about 2 degrees at the ~1 m reading distance. */
+export const MIN_HIT_CM = 3.5
+
+/**
+ * Forgiving controls: grows only the button's collider (never its drawn size) to at least minCm on each side,
+ * and gives a visible hover highlight (a small lift of the whole button). Call after btn.size is final.
+ */
+export function enlargeHitArea(btn: Button, minCm: number = MIN_HIT_CM, hoverScale: number = 1.1): void {
+  const s = btn.size
+  btn.colliderFitElement = false
+  btn.colliderSize = new vec3(Math.max(s.x, minCm), Math.max(s.y, minCm), Math.max(s.z, 1))
+  btn.colliderCenter = vec3.zero()
+  const t = btn.sceneObject.getTransform()
+  btn.onHoverEnter.add(() => t.setLocalScale(new vec3(hoverScale, hoverScale, 1)))
+  btn.onHoverExit.add(() => t.setLocalScale(vec3.one()))
+}
 
 export function obj(parent: SceneObject, name: string, position?: vec3): SceneObject {
   const so = global.scene.createSceneObject(name)

@@ -1,6 +1,6 @@
 // SkyHangarShelfUI.ts
 // Owns: the hangar shelf's text and controls in the glass style — a title plaque ("My Hangar · N models"),
-// ONE glass name tag that appears only while a model is hovered or held (flight large, route in accent,
+// one glass info tag under each model, always visible (flight large, route in accent,
 // airline + where/when as small caps), and a glass paging row (UIKit Buttons ‹ and ›, page dots, "6–10 of 24" counter, Sort toggle).
 // Lives as a child of the shelf root so everything moves with the shelf.
 // Public API: configure(...), setPlaque(i, lines|null) (stores the text), showTag(i, worldPos|null), setControls(...), setTitle(text, pos?),
@@ -12,7 +12,7 @@ import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/E
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  GLASS_READABLE, PALETTE, applyFontToContent, RADIUS, SPACE, addFlexChild, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
+  GLASS_READABLE, PALETTE, applyFontToContent, RADIUS, SPACE, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
 interface Tag {
@@ -40,7 +40,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   @ui.group_end
 
   private names: (string[] | null)[] = []
-  private tag: Tag | null = null
+  private tags: Tag[] = []
   private title!: Text
   private titleRoot!: SceneObject
   private counter!: Text
@@ -77,7 +77,9 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     return n ? n.join(" | ") : ""
   }
   /** Stand index the name tag is showing for (-1 = hidden). */
-  getTagIndex(): number { return this.tag ? this.tag.shown : -1 }
+  getTagIndex(): number { const t = this.tags.find((x) => x.shown >= 0); return t ? t.shown : -1 }
+  getPlaqueSlotCount(): number { return this.tags.length }
+  getTagCount(): number { return this.tags.filter((x) => x.shown >= 0).length }
   getTitle(): string { return this.title ? this.title.text : "" }
   getCounterText(): string { return this.counter ? this.counter.text : "" }
   getDotsText(): string { return this.dots ? this.dots.text : "" }
@@ -93,7 +95,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     if (this.configured) return
     this.configured = true
     for (let i = 0; i < slotCount; i++) this.names.push(null)
-    this.tag = this.buildTag()
+    for (let i = 0; i < slotCount; i++) this.tags.push(this.buildTag())
     this.buildControls(controlsPos)
   }
 
@@ -101,14 +103,18 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   setPlaque(i: number, lines: string[] | null): void {
     if (i < 0 || i >= this.names.length) return
     this.names[i] = lines ? lines.slice() : null
-    if (this.tag && this.tag.shown === i) this.showTag(-1, null)
+    if (this.tags[i] && this.tags[i].shown === i) this.showTag(i, null)
   }
 
-  /** Shows the name tag for stand i just above worldPos; i < 0 or null hides it. */
+  /** Shows stand i's info tag at worldPos; null hides it; i < 0 hides every tag. */
   showTag(i: number, worldPos: vec3 | null): void {
-    const t = this.tag
+    if (i < 0) {
+      for (let j = 0; j < this.tags.length; j++) this.showTag(j, null)
+      return
+    }
+    const t = this.tags[i]
     if (!t) return
-    const lines = i >= 0 ? this.names[i] : null
+    const lines = this.names[i]
     if (!lines || !worldPos) {
       if (t.shown !== -1) {
         t.shown = -1
@@ -150,14 +156,15 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const root = obj(this.sceneObject, "NameTag", vec3.zero())
     root.getTransform().setLocalRotation(quat.angleAxis(-0.2, vec3.right()))
     const h = rowHeight("Headline", D) + rowHeight("Body", D) + rowHeight("Label", D) * 2 + SPACE.m * k
-    glassPanel(root, "NameTagGlass", new vec2(W, h), {radiusCm: RADIUS.m * k, tint: GLASS_READABLE})
+    glassPanel(root, "NameTagGlass", new vec2(W, h), {radiusCm: RADIUS.m * k, tint: new vec4(0.1, 0.17, 0.32, 0.8), glow: new vec4(0.6, 0.78, 1, 0.12)})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, W, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     const inner = W - 1.0
-    const t1 = addTextRow(col.so, col.flex, "TagHead", "VS93", "Headline", inner, rowHeight("Headline", D), PALETTE.text, D)
-    const t2 = addTextRow(col.so, col.flex, "TagRoute", "LHR → CUN", "Body", inner, rowHeight("Body", D), PALETTE.accent, D)
-    const t3 = addTextRow(col.so, col.flex, "TagAirline", "VIRGIN ATLANTIC AIRWAYS", "Label", inner, rowHeight("Label", D), PALETTE.text, D)
-    const t4 = addTextRow(col.so, col.flex, "TagMeta", "Ealing, London · 28 Oct 17:54", "Label", inner, rowHeight("Label", D), PALETTE.textDim, D)
+    const white = new vec4(1, 1, 1, 1)
+    const t1 = addTextRow(col.so, col.flex, "TagHead", "VS93", "Headline", inner, rowHeight("Headline", D), white, D)
+    const t2 = addTextRow(col.so, col.flex, "TagRoute", "LHR → CUN", "Body", inner, rowHeight("Body", D), white, D)
+    const t3 = addTextRow(col.so, col.flex, "TagAirline", "VIRGIN ATLANTIC AIRWAYS", "Label", inner, rowHeight("Label", D), white, D)
+    const t4 = addTextRow(col.so, col.flex, "TagMeta", "Ealing, London · 28 Oct 17:54", "Label", inner, rowHeight("Label", D), new vec4(1, 1, 1, 0.88), D)
     root.getTransform().setLocalScale(vec3.zero())
     return {root, texts: [t1, t2, t3, t4], shown: -1}
   }
@@ -188,6 +195,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     ec.text = label
     ec.textSize = roleSize(label.length <= 1 ? "Headline" : "Button", this.readDistanceCm)
     btn.onTriggerUp.add(() => onTap())
+    enlargeHitArea(btn)
     addFlexChild(so, flex, w, h)
     return ec
   }

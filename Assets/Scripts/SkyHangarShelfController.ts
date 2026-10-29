@@ -69,7 +69,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   @input
   @hint("Models shown on the shelf at a time (one page)")
   @widget(new SliderWidget(3, 8, 1))
-  visibleSlots: number = 5
+  visibleSlots: number = 3
   @input
   @hint("Horizontal spacing between stands, cm")
   @widget(new SliderWidget(8, 30, 0.5))
@@ -164,6 +164,12 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   getStandModelWorldPos(i: number): vec3 {
     const st = this.stands[i]
     return st ? st.holder.getTransform().getWorldPosition() : this.sceneObject.getTransform().getWorldPosition()
+  }
+
+  /** Fixed world point on stand i (does not bob with the model): the tag anchor. */
+  getStandAnchorWorldPos(i: number): vec3 {
+    const st = this.stands[i]
+    return st ? st.obj.getTransform().getWorldPosition() : this.sceneObject.getTransform().getWorldPosition()
   }
 
   /** Hide / show the shelf copy of an entry (while its model is out in the hand). */

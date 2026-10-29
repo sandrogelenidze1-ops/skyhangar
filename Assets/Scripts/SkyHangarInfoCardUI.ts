@@ -21,7 +21,7 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {MapTrack, RouteMap} from "./SkyHangarRouteMap"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight,
+  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight,
   FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
@@ -462,6 +462,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     ec.textSize = roleSize(look === "tab" ? "Headline" : "Button", D)
     tintContent(ec, TEXT.primary, TEXT.primary)
     btn.onTriggerUp.add(() => onTap())
+    enlargeHitArea(btn)
     if (flex && look !== "tab") addFlexChild(holder, flex, w, h)
     return btn
   }
