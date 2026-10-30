@@ -18,7 +18,10 @@ import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFact
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, yawOf, yawOffset, yawRotation, DEG} from "./SkyHangarUtil"
 
-const STAND_FLOAT_CM = 4.5
+// The glass rail sits RAIL_Y above the stand origin: just under the vehicles and ~1.5 cm above the top of the fixed info labels
+// (label centre is 1.5 cm below the origin, about 7.3 cm tall).
+const RAIL_Y = 4.0
+const STAND_FLOAT_CM = 7.7
 
 export type ShelfSort = "newest" | "airline"
 
@@ -28,6 +31,16 @@ export interface InspectRequest {
   fromWorld: vec3
   interactor: Interactor
 }
+
+/** A quick tap on the shelf: on a model (info set) or on the shelf itself (info null). */
+export interface ShelfTap {
+  info: SkyObjectInfo | null
+  fromWorld: vec3
+}
+
+/** A pinch released within this time and movement is a tap, not a drag. */
+const TAP_MAX_SECONDS = 0.15
+const TAP_MAX_MOVE_CM = 1
 
 export interface ShelfEntry {
   info: SkyObjectInfo
@@ -98,11 +111,13 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   private page = 0
   private ready = false
   private built = false
-  private drag: {it: Interactor; dir0: vec3; t0: number; stand: Stand | null} | null = null
+  private drag: {it: Interactor; dir0: vec3; t0: number; stand: Stand | null; dist: number} | null = null
   private hiddenId = ""
   private hover = -1
   private _onInspect = new Event<InspectRequest>()
   get onInspect(): PublicApi<InspectRequest> { return this._onInspect.publicApi() }
+  private _onTap = new Event<ShelfTap>()
+  get onTap(): PublicApi<ShelfTap> { return this._onTap.publicApi() }
   private _onPageChanged = new Event<void>()
   get onPageChanged(): PublicApi<void> { return this._onPageChanged.publicApi() }
 
@@ -227,9 +242,9 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   }
 
   /** Shelf-space position of the paging controls row (above the models, so the head-following menu bar never covers it). */
-  controlsLocalPos(): vec3 { return new vec3(0, this.modelSpanCm + 10, 2) }
+  controlsLocalPos(): vec3 { return new vec3(0, RAIL_Y + this.modelSpanCm * 1.6 + 8, 2) }
   /** Shelf-space position just above the models (for the title plaque). */
-  titleLocalPos(): vec3 { return new vec3(0, this.modelSpanCm + 17.5, 0) }
+  titleLocalPos(): vec3 { return new vec3(0, RAIL_Y + this.modelSpanCm * 1.6 + 15.5, 0) }
   standLocalPos(i: number): vec3 {
     return new vec3((i - (this.visibleSlots - 1) / 2) * this.standSpacingCm, 0, 0)
   }
@@ -260,10 +275,10 @@ export class SkyHangarShelfController extends BaseScriptComponent {
     if (!kit) return
     const w = this.visibleSlots * this.standSpacingCm + 4
     // Thin glass ledge with a soft edge glow (translucent; reads on an additive display)
-    kit.part(this.contentRoot, "ShelfLedge", kit.box, kit.uniqueUnlit(new vec4(this.plankColor.x, this.plankColor.y, this.plankColor.z, 0.28)), new vec3(0, -0.4, 0), new vec3(w, 0.8, 12))
-    kit.part(this.contentRoot, "ShelfEdge", kit.box, kit.uniqueUnlit(new vec4(0.62, 0.85, 1.0, 0.95)), new vec3(0, -0.4, 6.05), new vec3(w, 0.35, 0.25))
-    kit.part(this.contentRoot, "ShelfEdgeGlow", kit.box, kit.uniqueUnlit(new vec4(0.55, 0.8, 1.0, 0.22)), new vec3(0, -0.4, 6.2), new vec3(w + 0.6, 1.6, 0.1))
-    kit.part(this.contentRoot, "ShelfBackEdge", kit.box, kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.5)), new vec3(0, -0.4, -6.0), new vec3(w, 0.2, 0.15))
+    kit.part(this.contentRoot, "ShelfLedge", kit.box, kit.uniqueUnlit(new vec4(this.plankColor.x, this.plankColor.y, this.plankColor.z, 0.28)), new vec3(0, RAIL_Y, 0), new vec3(w, 0.8, 12))
+    kit.part(this.contentRoot, "ShelfEdge", kit.box, kit.uniqueUnlit(new vec4(0.62, 0.85, 1.0, 0.95)), new vec3(0, RAIL_Y, 6.05), new vec3(w, 0.35, 0.25))
+    kit.part(this.contentRoot, "ShelfEdgeGlow", kit.box, kit.uniqueUnlit(new vec4(0.55, 0.8, 1.0, 0.22)), new vec3(0, RAIL_Y, 6.2), new vec3(w + 0.6, 1.6, 0.1))
+    kit.part(this.contentRoot, "ShelfBackEdge", kit.box, kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.5)), new vec3(0, RAIL_Y, -6.0), new vec3(w, 0.2, 0.15))
     for (let i = 0; i < this.visibleSlots; i++) {
       const obj = makeObj(this.contentRoot, "ShelfStand_" + i)
       obj.getTransform().setLocalPosition(this.standLocalPos(i))
@@ -273,9 +288,9 @@ export class SkyHangarShelfController extends BaseScriptComponent {
         kit.uniqueUnlit(new vec4(0.6, 0.85, 1.0, 0.16)),
         kit.uniqueUnlit(new vec4(0.85, 0.95, 1.0, 0.3))
       ]
-      kit.part(obj, "GlowOuter", kit.cylinder, glow[0], new vec3(0, 0.1, 0), new vec3(this.modelSpanCm * 1.15, 0.05, this.modelSpanCm * 1.15))
-      kit.part(obj, "GlowMid", kit.cylinder, glow[1], new vec3(0, 0.15, 0), new vec3(this.modelSpanCm * 0.85, 0.05, this.modelSpanCm * 0.85))
-      kit.part(obj, "GlowCore", kit.cylinder, glow[2], new vec3(0, 0.2, 0), new vec3(this.modelSpanCm * 0.45, 0.05, this.modelSpanCm * 0.45))
+      kit.part(obj, "GlowOuter", kit.cylinder, glow[0], new vec3(0, RAIL_Y + 0.5, 0), new vec3(this.modelSpanCm * 1.15, 0.05, this.modelSpanCm * 1.15))
+      kit.part(obj, "GlowMid", kit.cylinder, glow[1], new vec3(0, RAIL_Y + 0.55, 0), new vec3(this.modelSpanCm * 0.85, 0.05, this.modelSpanCm * 0.85))
+      kit.part(obj, "GlowCore", kit.cylinder, glow[2], new vec3(0, RAIL_Y + 0.6, 0), new vec3(this.modelSpanCm * 0.45, 0.05, this.modelSpanCm * 0.45))
       const holder = makeObj(obj, "ModelHolder")
       holder.getTransform().setLocalPosition(new vec3(0, STAND_FLOAT_CM + this.modelSpanCm * 0.25, 0))
       // Tip the model toward the viewer so its top view reads from eye level.
@@ -284,7 +299,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
     }
     // Drag zone over the models: a sideways pinch-drag pages the shelf.
     const zone = makeObj(this.contentRoot, "ShelfDragZone")
-    zone.getTransform().setLocalPosition(new vec3(0, this.modelSpanCm * 0.6, 0))
+    zone.getTransform().setLocalPosition(new vec3(0, RAIL_Y + this.modelSpanCm * 0.8, 0))
     const col = zone.createComponent("Physics.ColliderComponent") as ColliderComponent
     const box = Shape.createBoxShape()
     box.size = new vec3(w, this.modelSpanCm * 1.6 + 3, 10)
@@ -304,7 +319,11 @@ export class SkyHangarShelfController extends BaseScriptComponent {
       hoverAt(e)
       const d = e.interactor.direction
       const o = e.interactor.startPoint
-      if (d) this.drag = {it: e.interactor, dir0: d, t0: getTime(), stand: o ? this.standUnderRay(o, d.normalize()) : null}
+      if (d) {
+        const stand = o ? this.standUnderRay(o, d.normalize()) : null
+        const dist = stand && o && stand.model ? stand.model.root.getTransform().getWorldPosition().sub(o).length : this.openOffset.length
+        this.drag = {it: e.interactor, dir0: d, t0: getTime(), stand, dist}
+      }
     })
     this.built = true
   }
@@ -351,9 +370,16 @@ export class SkyHangarShelfController extends BaseScriptComponent {
       const it = this.drag.it
       if (!it.isTriggering) {
         const d = it.direction
-        if (d) {
+        const drag = this.drag
+        this.drag = null
+        const moveCm = d ? d.normalize().sub(drag.dir0.normalize()).length * drag.dist : 0
+        if (getTime() - drag.t0 < TAP_MAX_SECONDS && moveCm < TAP_MAX_MOVE_CM) {
+          const st = drag.stand
+          const shown = !!st && !!st.entry && !!st.model && !isNull(st.model.root)
+          this._onTap.invoke({info: shown ? st!.entry!.info : null, fromWorld: shown ? st!.model!.root.getTransform().getWorldPosition() : this.getShelfWorldPos()})
+        } else if (d) {
           const right = this.sceneObject.getTransform().getWorldRotation().multiplyVec3(vec3.right())
-          const delta = (Math.asin(Math.max(-1, Math.min(1, d.normalize().sub(this.drag.dir0.normalize()).dot(right)))) / DEG)
+          const delta = (Math.asin(Math.max(-1, Math.min(1, d.normalize().sub(drag.dir0.normalize()).dot(right)))) / DEG)
           // Drag left (content moves left) -> next page; drag right -> previous page.
           if (delta < -this.swipeDeg) this.nextPage()
           else if (delta > this.swipeDeg) this.prevPage()

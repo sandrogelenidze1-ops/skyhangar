@@ -32,6 +32,8 @@ const CARD_TINT = new vec4(0.16, 0.29, 0.62, 0.78)
 const CARD_GLOW = new vec4(0.55, 0.72, 1.0, 0.14)
 const TILE_TINT = new vec4(0.3, 0.48, 0.88, 0.42)
 const TAB_ACTIVE_TEXT = new vec4(0.06, 0.13, 0.32, 1) // dark text on the white active tab (~14:1)
+/** Height (before the card's distance scale) of the row under the aircraft line that holds the View 3D pill. */
+const VIEW_ROW_CM = 5
 
 /** UIKit keeps text/icon colours private; switch theme colours off and write the same colour for every state. */
 function tintContent(ec: ElementContent, text: vec4, icon: vec4): void {
@@ -188,6 +190,10 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   private _onClose = new Event<void>()
   get onClose(): PublicApi<void> { return this._onClose.publicApi() }
   private liveStart = 0
+  private _onView3D = new Event<void>()
+  get onView3D(): PublicApi<void> { return this._onView3D.publicApi() }
+  private view3DContent: ElementContent | null = null
+  private view3DOn = false
 
   onAwake(): void {
     this.tab = this.defaultTab === "route" ? "route" : "info"
@@ -215,6 +221,13 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   getRouteProgress(): number { return this.routeProgress }
   /** Where the main script places the live side-view aircraft model (Info tab). ~9 cm wide slot, nose to +X. */
   getImageAnchor(): SceneObject { return this.imageAnchor }
+
+  /** The model is out in 3D in front of the user: the Info tab button reads "Back to sky" instead of "View 3D". */
+  setViewing(on: boolean): void {
+    if (on === this.view3DOn || !this.view3DContent) return
+    this.view3DOn = on
+    this.view3DContent.text = on ? "Back to sky" : "View 3D"
+  }
 
   /** Elevation (deg, view-relative) of the menu bar top edge; the card is kept above it. */
   setMenuTopProvider(fn: () => number): void { this.menuTop = fn }
@@ -340,7 +353,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
 
     // Tab area (fixed height so the card doesn't jump between tabs)
     const tileH = rowHeight("Label", D) * 2 + rowHeight("Display", D) + 1.0 * k
-    const paneH = tileH + 0.9 * k + 5.4 * k
+    const paneH = tileH + 0.9 * k + 5.4 * k + VIEW_ROW_CM * k
     const area = obj(col.so, "TabArea", new vec3(0, 0, 0.02))
     addFlexChild(area, col.flex, inner, paneH)
     this.buildInfoPane(area, inner, paneH, tileH, D)
@@ -394,7 +407,8 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     // Aircraft row: image slot + type name + takeoff/landing. The slot holds the current live side-view model until
     // the aircraft renders (R2) arrive; swap the anchor's child for the render image then.
     const airH = 5.4 * k
-    const yAir = -h / 2 + airH / 2
+    const viewH = VIEW_ROW_CM * k
+    const yAir = -h / 2 + viewH + airH / 2
     const slotW = 9.5 * k
     this.imageAnchor = obj(this.infoPane, "AircraftImageAnchor", new vec3(-w / 2 + slotW / 2 + 0.9 * k, yAir - 0.5 * k, 2.0))
     const nameW = w - slotW - 1.9 * k
@@ -402,6 +416,12 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     name.so.getTransform().setLocalPosition(new vec3(-w / 2 + slotW + 1.9 * k + nameW / 2, yAir, 0.02))
     this.rows.typeName = addTextRow(name.so, name.flex, "TypeName", "Airbus A320", "Headline", nameW, rowHeight("Headline", D), TEXT.primary, D, L)
     this.rows.timesLine = addTextRow(name.so, name.flex, "TimesLine", "Takeoff 13:03 · Landing 15:26 UTC", "Label", nameW, rowHeight("Label", D), TEXT.secondary, D, L)
+    // View 3D pill (same glass pill as the Route | Info control), centred under the aircraft line, with a big hit area.
+    const btnH = 4.4 * k
+    const btn = this.makeButton(this.infoPane, null, "InfoCardView3D", "View 3D", null, 15 * k, btnH, D, "Capsule", () => this._onView3D.invoke(), "secondary")
+    btn.sceneObject.getParent().getTransform().setLocalPosition(new vec3(0, -h / 2 + viewH / 2, 0.05))
+    enlargeHitArea(btn, 8 * k)
+    this.view3DContent = btn.sceneObject.getComponent(ElementContent.getTypeName()) as ElementContent
   }
 
   private buildRoutePane(area: SceneObject, w: number, h: number, D: number): void {

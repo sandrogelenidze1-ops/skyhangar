@@ -156,7 +156,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const root = obj(this.sceneObject, "NameTag", vec3.zero())
     root.getTransform().setLocalRotation(quat.angleAxis(-0.2, vec3.right()))
     const h = rowHeight("Headline", D) + rowHeight("Body", D) + rowHeight("Label", D) * 2 + SPACE.m * k
-    glassPanel(root, "NameTagGlass", new vec2(W, h), {radiusCm: RADIUS.m * k, tint: new vec4(0.1, 0.17, 0.32, 0.8), glow: new vec4(0.6, 0.78, 1, 0.12)})
+    glassPanel(root, "NameTagGlass", new vec2(W, h), {radiusCm: RADIUS.m * k, tint: new vec4(0.04, 0.09, 0.22, 0.92), glow: new vec4(0.6, 0.78, 1, 0.06)})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, W, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     const inner = W - 1.0
@@ -164,7 +164,8 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const t1 = addTextRow(col.so, col.flex, "TagHead", "VS93", "Headline", inner, rowHeight("Headline", D), white, D)
     const t2 = addTextRow(col.so, col.flex, "TagRoute", "LHR → CUN", "Body", inner, rowHeight("Body", D), white, D)
     const t3 = addTextRow(col.so, col.flex, "TagAirline", "VIRGIN ATLANTIC AIRWAYS", "Label", inner, rowHeight("Label", D), white, D)
-    const t4 = addTextRow(col.so, col.flex, "TagMeta", "Ealing, London · 28 Oct 17:54", "Label", inner, rowHeight("Label", D), new vec4(1, 1, 1, 0.88), D)
+    ;(t2 as Text & {weight?: number}).weight = 600 // the Body role is lighter than the rest; match the other lines
+    const t4 = addTextRow(col.so, col.flex, "TagMeta", "Ealing, London · 28 Oct 17:54", "Label", inner, rowHeight("Label", D), white, D)
     root.getTransform().setLocalScale(vec3.zero())
     return {root, texts: [t1, t2, t3, t4], shown: -1}
   }
@@ -174,7 +175,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const k = D / 110
     const root = obj(this.sceneObject, "ShelfPagingControls", pos)
     const h = 3.6 * k
-    const w = 44 * k
+    const w = 50 * k
     glassPanel(root, "PagingGlass", new vec2(w, h + SPACE.s * k * 2), {radiusCm: (h + SPACE.s * k * 2) / 2, tint: GLASS_READABLE})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const row = makeFlex(content, "Row", FlexDirection.Row, w, h + SPACE.s * k * 2, {gap: SPACE.m * k, justify: FlexJustify.Center, align: FlexAlign.Center})

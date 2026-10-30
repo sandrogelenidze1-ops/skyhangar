@@ -15,6 +15,7 @@ import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/E
 import {Interactable} from "SpectaclesInteractionKit.lspkg/Components/Interaction/Interactable/Interactable"
 import {InteractorEvent} from "SpectaclesInteractionKit.lspkg/Core/Interactor/InteractorEvent"
 import {Interactor, InteractorInputType} from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
+import {SIK} from "SpectaclesInteractionKit.lspkg/SIK"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
@@ -24,7 +25,7 @@ import {
   PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
 } from "./SkyHangarUtil"
 
-export type HeldState = "none" | "flyingIn" | "held" | "collecting" | "returningToSky" | "returningToShelf" | "thrown" | "returning" | "resting"
+export type HeldState = "none" | "flyingIn" | "held" | "viewing" | "collecting" | "returningToSky" | "returningToShelf" | "thrown" | "returning" | "resting"
 export type ReleaseTarget = "hangar" | "sky" | "throw" | "shelf"
 
 /** Hooks the main script gives a hangar inspect (the held controller does not know the shelf). */
@@ -79,6 +80,13 @@ const TURN_WIDTH_CM = 240
 const THROW_MIN_SPEED_CM = 180
 /** Fraction of the release speed still left when the glide hands over to the U-turn. */
 const GLIDE_END_SPEED = 0.35
+/** Inspect mode: the model hangs 40 cm ahead of the eyes and turns slowly. */
+const VIEW_OFFSET = new vec3(0, -2, -40)
+const VIEW_DISTANCE_CM = 40
+const VIEW_TURN_RAD_PER_S = 0.5
+/** A pinch released within this time and movement is a tap; anything longer or further is a drag. */
+const TAP_MAX_SECONDS = 0.15
+const TAP_MAX_MOVE_CM = 1
 const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
 const PAD_OFFSET_SKY = new vec3(16, -5, -80)
 
@@ -185,6 +193,10 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private bank = 0
   private rotBlend = 0
   private fadeMats: {mat: Material; color: vec4}[] = []
+  // inspect mode: where the model came from, and the empty-space tap being timed
+  private viewOrigin: "" | "shelf" | "sky" = ""
+  private emptyTap: {it: Interactor; t0: number; dir0: vec3} | null = null
+  private prevTrig = new Map<Interactor, boolean>()
 
   private hangarPad!: Pad
   private skyPad!: Pad
@@ -272,6 +284,34 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   /** True while the model in the hand came from the hangar shelf. */
   isInspecting(): boolean { return this.inspect !== null && this.state !== "none" }
 
+  /** True while a model hangs in inspect mode (40 cm ahead, slowly turning). */
+  isViewing(): boolean { return this.state === "viewing" }
+  /** Where the model out now was taken from when it entered inspect mode ("" = pulled by hand). */
+  getViewOrigin(): "" | "shelf" | "sky" { return this.state !== "none" ? this.viewOrigin : "" }
+
+  /** Send a shelf model (hooks) or a sky model (hooks null) to inspect mode in front of the user. */
+  beginView(info: SkyObjectInfo, fromWorld: vec3, hooks: InspectHooks | null): void {
+    this.beginPull(info, fromWorld, null)
+    this.viewOrigin = hooks ? "shelf" : "sky"
+    if (hooks) {
+      this.inspect = hooks
+      this.fromScale = hooks.shelfSpanCm / this.modelSpanCm
+    }
+  }
+
+  /** Leave inspect mode: a shelf model returns smoothly to its slot, a sky model to its place in the sky. */
+  endView(): boolean {
+    if (this.state !== "viewing") return false
+    this.interactor = null
+    this.grabPending = false
+    this.emptyTap = null
+    if (this.viewOrigin === "shelf") {
+      this.startShelfReturn()
+      this.overShelf = false // always the smooth return, never the quick settle
+    } else this.startSkyReturn()
+    return true
+  }
+
   /**
    * Release the held model. overPad: null = use the real position; true = hangar pad; false = throw;
    * "sky" = the Sky return pad (tests / automation).
@@ -282,13 +322,17 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (this.state === "flyingIn" && overPad === null) return // let go before arrival: settles into the hand
     let target: ReleaseTarget
     if (this.inspect) {
-      // From the hangar: only the Sky pad sends it away; anywhere else is a free throw that glides back to its shelf slot.
-      target = overPad === "sky" || (overPad === null && this.skyPad.over) ? "sky" : "throw"
+      // From the hangar: the Sky pad sends it away; (after inspect mode) the Hangar pad returns it to its slot;
+      // anywhere else is a free throw that glides back to its shelf slot.
+      if (overPad === "sky" || (overPad === null && this.skyPad.over)) target = "sky"
+      else if (this.viewOrigin === "shelf" && (overPad === true || (overPad === null && this.hangarPad.over))) target = "shelf"
+      else target = "throw"
     } else if (overPad === null) target = this.hangarPad.over ? "hangar" : this.skyPad.over ? "sky" : "throw"
     else if (overPad === "sky") target = "sky"
     else target = overPad ? "hangar" : "throw"
     if (target === "hangar") this.startCollect()
     else if (target === "sky") this.startSkyReturn()
+    else if (target === "shelf") this.startShelfReturn()
     else this.startThrow()
   }
 
@@ -410,6 +454,57 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private setState(s: HeldState): void {
     this.state = s
     if (s === "held") this.samples = []
+    if (s === "viewing") {
+      this.prevTrig.clear()
+      this.emptyTap = null
+      this.grabPending = false
+    }
+  }
+
+  private viewPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, VIEW_OFFSET) }
+
+  /** Movement of the pinch ray since dir0, in cm at the inspect distance. */
+  private rayMoveCm(it: Interactor, dir0: vec3): number {
+    const d = it.direction
+    return d ? d.normalize().sub(dir0.normalize()).length * VIEW_DISTANCE_CM : 0
+  }
+
+  /** Inspect mode input: a pinch on the model is a tap (< 0.15 s, < 1 cm) or the start of a drag; a tap on empty space also leaves. */
+  private updateViewInput(): void {
+    if (this.grabPending && this.interactor) {
+      const it = this.interactor
+      const elapsed = getTime() - this.grabT0
+      const moved = this.rayMoveCm(it, this.grabDir0)
+      if (!it.isTriggering) {
+        this.grabPending = false
+        this.interactor = null
+        if (elapsed < TAP_MAX_SECONDS && moved < TAP_MAX_MOVE_CM) this.endView()
+        return
+      }
+      if (elapsed >= TAP_MAX_SECONDS || moved >= TAP_MAX_MOVE_CM) {
+        this.grabPending = false
+        this.lastWasScripted = false
+        this.yawAtPull = this.camYaw()
+        this.setState("held") // a drag: the pads appear and the release works as for any held model
+      }
+      return
+    }
+    for (const it of SIK.InteractionManager.getInteractorsByType(InteractorInputType.All)) {
+      const now = it.isTriggering
+      const was = this.prevTrig.get(it) ?? false
+      this.prevTrig.set(it, now)
+      if (now && !was) {
+        const d = it.direction
+        this.emptyTap = it.currentInteractable === null && d ? {it, t0: getTime(), dir0: d} : null
+      } else if (!now && was && this.emptyTap && this.emptyTap.it === it) {
+        const tap = this.emptyTap
+        this.emptyTap = null
+        if (getTime() - tap.t0 < TAP_MAX_SECONDS && this.rayMoveCm(it, tap.dir0) < TAP_MAX_MOVE_CM) {
+          this.endView()
+          return
+        }
+      }
+    }
   }
 
   /** Everything that must not leak from one hold into the next. */
@@ -433,6 +528,8 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.rotBlend = 0
     this.state = "none"
     this.inspect = null
+    this.viewOrigin = ""
+    this.emptyTap = null
     this.overShelf = false
     this.interactor = null
     this.grabPending = false
@@ -443,7 +540,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   }
 
   private onGrab(e: InteractorEvent): void {
-    if (this.state !== "resting") return
+    if (this.state !== "resting" && this.state !== "viewing") return
     this.interactor = e.interactor
     this.grabT0 = getTime()
     const d = e.interactor.direction
@@ -566,7 +663,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (!this.holder) return
     const dt = getDeltaTime()
     const ht = this.holder.getTransform()
-    const holding = this.state === "flyingIn" || this.state === "held"
+    const holding = (this.state === "flyingIn" && !this.viewOrigin) || this.state === "held"
     const yaw = this.yawAtPull
 
     // Pads: visible only while holding; brighter when the model is over them; fade out after release.
@@ -578,7 +675,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     }
     const hPos = this.padPos(yaw)
     const sPos = this.skyPadPos(yaw)
-    this.updatePad(this.hangarPad, hPos, faceEyes(hPos), (holding && !this.inspect) || this.state === "collecting", dt)
+    this.updatePad(this.hangarPad, hPos, faceEyes(hPos), (holding && (!this.inspect || this.viewOrigin === "shelf")) || this.state === "collecting", dt)
     this.updatePad(this.skyPad, sPos, faceEyes(sPos), holding || this.state === "returningToSky", dt)
 
     if (this.state === "none") return
@@ -589,14 +686,15 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       case "flyingIn": {
         this.t += dt / this.flyInSeconds
         const k = easeOutCubic(this.t)
-        const target = this.interactor ? this.rayHoldPoint(this.interactor) ?? this.handPos(yaw) : this.handPos(yaw)
+        const target = this.viewOrigin ? this.viewPos(yaw) : this.interactor ? this.rayHoldPoint(this.interactor) ?? this.handPos(yaw) : this.handPos(yaw)
         ht.setWorldPosition(vec3.lerp(this.fromPos, target, k))
         const sc = this.fromScale + (1 - this.fromScale) * k
         if (visual) visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
         this.faceUser(visual, 0)
         if (this.t >= 1) {
           if (visual) visual.getTransform().setLocalScale(vec3.one())
-          if (this.interactor && this.interactor.isTriggering) this.setState("held")
+          if (this.viewOrigin) this.setState("viewing")
+          else if (this.interactor && this.interactor.isTriggering) this.setState("held")
           else if (this.interactor === null && this.lastWasScripted) this.setState("held")
           else if (this.inspect) this.startShelfReturn()
           else this.setState("resting")
@@ -621,7 +719,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
           const capture = this.padDiameterCm * 0.5 * PAD_HIT_SCALE
           const dH = this.padMiss(pos, this.padPos(yaw))
           const dS = this.padMiss(pos, this.skyPadPos(yaw))
-          const nearH = !this.inspect && dH < capture && dH <= dS
+          const nearH = (!this.inspect || this.viewOrigin === "shelf") && dH < capture && dH <= dS
           const nearS = dS < capture && dS < dH
           this.hangarPad.dwell = nearH ? this.hangarPad.dwell + dt : 0
           this.skyPad.dwell = nearS ? this.skyPad.dwell + dt : 0
@@ -632,6 +730,15 @@ export class SkyHangarHeldController extends BaseScriptComponent {
           break
         }
         this.faceUser(visual, dt)
+        break
+      }
+      case "viewing": {
+        // Inspect mode: hangs 40 cm ahead with a faint bob, turning slowly.
+        const bob = Math.sin(getTime() * 2) * 0.4
+        ht.setWorldPosition(vec3.lerp(ht.getWorldPosition(), this.viewPos(yaw).add(new vec3(0, bob, 0)), clamp01(dt * 6)))
+        this.spinTarget += VIEW_TURN_RAD_PER_S * dt
+        this.faceUser(visual, dt)
+        this.updateViewInput()
         break
       }
       case "collecting": {
@@ -724,7 +831,8 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       case "returning": {
         // Paper-plane glide: keep the release velocity (slowly bleeding speed), then curve back to the hand.
         const hooks = this.inspect
-        const hand = hooks ? hooks.slotPos() ?? this.handPos(yaw) : this.handPos(yaw) // from the hangar it comes home to its slot
+        const back = this.viewOrigin === "sky" ? this.viewPos(yaw) : this.handPos(yaw) // a sky model viewed in 3D returns to the inspect spot
+        const hand = hooks ? hooks.slotPos() ?? back : back // from the hangar it comes home to its slot
         const before = ht.getWorldPosition()
         if (this.state === "thrown") {
           // Straight glide that eases out: speed falls smoothly from the release speed to GLIDE_END_SPEED of it.
@@ -765,7 +873,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
               break
             }
             this.rotBlend = 1.2 // ease into the resting pose instead of snapping
-            this.setState("resting")
+            this.setState(this.viewOrigin ? "viewing" : "resting")
             if (this.info) this._onReturned.invoke(this.info)
           }
         }

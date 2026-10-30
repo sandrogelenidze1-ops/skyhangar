@@ -6,8 +6,9 @@
     - !<own> f5d74682-203a-4970-81ea-9fa7b88c96bb
     - !<own> 38d764d7-bf2b-40c8-b287-110a5c6d3b66
     - !<own> 9d3c5d7e-7290-43fb-98c3-0cfa95ec396d
-    - !<own> c5c62252-0e9e-4357-b184-98f0f692a778
-    - !<own> 0ebd63f4-f4c5-4477-b53c-68621658ed73
+    - !<own> 081ad248-3ba4-4bda-9715-6966a9a1339a
+    - !<own> 58888259-b30e-4e95-84da-a1946a7eaf14
+    - !<own> 279de7b6-e106-415e-9634-71c28b807277
   layers: !<Layers/267ee9a7-aff2-4f9d-9a49-f71214747d03>
     userLayers:
       - id: 1
@@ -240,6 +241,21 @@
     []
   Components:
     []
+- !<SceneObject/081ad248-3ba4-4bda-9715-6966a9a1339a>
+  PrefabRemaps:
+    []
+  Name: PreviewBackdrop
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 3a0cf5d3-dc45-4f23-9a57-be598277976f
 - !<ScriptComponent/0847d2bb-a13f-4c4a-a404-169f67308f6f>
   PrefabRemaps:
     []
@@ -370,6 +386,22 @@
     - !<own> 05147ea1-cb6b-4629-9484-199a4aa4d92a
   Components:
     []
+- !<ScriptComponent/0b796b65-7a49-4b9c-ac96-66d167246602>
+  PrefabRemaps:
+    []
+  Name: AgentInspectScript
+  Enabled: true
+  ScriptAsset: !<reference> 0b25079c-f5bf-4c6d-96c4-f43b89dfa213
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/0c355300-e635-47c1-a8c3-5ddef30b8824>
   PrefabRemaps:
     []
@@ -415,21 +447,6 @@
     - !<own> bbcddeb1-2c47-482e-861a-4f2d74fda27a
   Components:
     []
-- !<SceneObject/0ebd63f4-f4c5-4477-b53c-68621658ed73>
-  PrefabRemaps:
-    []
-  Name: AiPreviewAgent Handler
-  Enabled: true
-  Layers: 1
-  LocalTransform: !<TransformEntity>
-    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
-    HasSegmentScaleCompensation: false
-  Children:
-    []
-  Components:
-    - !<own> 385fd288-3718-41b7-87c4-e80690f533f4
 - !<SceneObject/0f983d21-20bc-4d89-a991-fbb95bacbd64>
   PrefabRemaps:
     []
@@ -720,6 +737,21 @@
     - !<own> 3a794764-c758-4d72-9d89-bf3ed978113f
   Components:
     []
+- !<SceneObject/279de7b6-e106-415e-9634-71c28b807277>
+  PrefabRemaps:
+    []
+  Name: AiPreviewAgent Handler
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 0b796b65-7a49-4b9c-ac96-66d167246602
 - !<ScriptComponent/27c3b40f-5422-4ae8-84b5-783cd8441e23>
   PrefabRemaps:
     []
@@ -952,22 +984,6 @@
     - !<own> 4051028a-c608-4a97-b3d5-1a3912a7c007
   Components:
     []
-- !<ScriptComponent/385fd288-3718-41b7-87c4-e80690f533f4>
-  PrefabRemaps:
-    []
-  Name: AgentInspectScript
-  Enabled: true
-  ScriptAsset: !<reference> 0b25079c-f5bf-4c6d-96c4-f43b89dfa213
-  ScriptInputsDefault:
-    {}
-  ScriptTypesDefault:
-    {}
-  ScriptInputs:
-    "":
-      {}
-  ScriptTypes:
-    "":
-      {}
 - !<SceneObject/38d764d7-bf2b-40c8-b287-110a5c6d3b66>
   PrefabRemaps:
     []
@@ -990,6 +1006,28 @@
     - !<own> 2a7eb5c2-e774-4890-b349-18ab1f912b52
   Components:
     - !<own> f6dc735b-102c-45e8-bcf0-8920e685c5c5
+- !<ScriptComponent/3a0cf5d3-dc45-4f23-9a57-be598277976f>
+  PrefabRemaps:
+    []
+  Name: SkyHangarPreviewBackdrop
+  Enabled: true
+  ScriptAsset: !<reference> 39208e81-0683-4b79-acf5-e3cd3a051b34
+  ScriptInputsDefault:
+    timeOfDay: true
+    autoSunset: true
+    sunsetDurationSec: true
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      cameraObject: !<reference.SceneObject> 00000000-0000-0065-0000-000000000064
+      skyMaterial: !<reference.Material> 533da64e-08fe-4d58-998f-c976293769b1
+      timeOfDay: 0.500000
+      autoSunset: false
+      sunsetDurationSec: !<float> 30.000000
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/3a2d3c1c-a7ed-404c-83a7-f8dc225cd71b>
   PrefabRemaps:
     []
@@ -1275,6 +1313,21 @@
     - !<own> 46b79537-a269-46f1-9483-500d7a4170d6
   Components:
     []
+- !<SceneObject/58888259-b30e-4e95-84da-a1946a7eaf14>
+  PrefabRemaps:
+    []
+  Name: LEAF Plugin Bridge
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 6feffb04-c5b9-41fa-b792-509253e79386
 - !<SceneObject/58ef319f-850e-40dd-8295-e6dc36ab4854>
   PrefabRemaps:
     []
@@ -1515,6 +1568,22 @@
     - !<own> 4c195c04-c397-454e-bd08-3485f37d84fe
   Components:
     []
+- !<ScriptComponent/6feffb04-c5b9-41fa-b792-509253e79386>
+  PrefabRemaps:
+    []
+  Name: MessagingBridge
+  Enabled: true
+  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/6ffcfe00-9e13-4a7c-ac4a-3ac48909b1ad>
   PrefabRemaps:
     []
@@ -1745,6 +1814,8 @@
     reticleSizeCm: true
     tapMaxSeconds: true
     dragStartDeg: true
+    dragDelaySeconds: true
+    aimAssistDeg: true
     showHorizonRing: true
   ScriptTypesDefault:
     {}
@@ -1768,6 +1839,8 @@
       reticleSizeCm: !<float> 24.000000
       tapMaxSeconds: 0.300000
       dragStartDeg: !<float> 3.000000
+      dragDelaySeconds: 0.150000
+      aimAssistDeg: !<float> 3.000000
       showHorizonRing: true
   ScriptTypes:
     "":
@@ -2468,21 +2541,6 @@
   ScriptTypes:
     "":
       {}
-- !<SceneObject/c5c62252-0e9e-4357-b184-98f0f692a778>
-  PrefabRemaps:
-    []
-  Name: LEAF Plugin Bridge
-  Enabled: true
-  Layers: 1
-  LocalTransform: !<TransformEntity>
-    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
-    HasSegmentScaleCompensation: false
-  Children:
-    []
-  Components:
-    - !<own> eef2b23a-95e5-491f-8085-5d41d5d4d65d
 - !<ScriptComponent/c8e031d3-a8a1-468a-a419-427f8556de4c>
   PrefabRemaps:
     []
@@ -2985,22 +3043,6 @@
     Fingers_length: 0.000000
     Thumb_inflate: 0.000000
     Thumb_length: 0.000000
-- !<ScriptComponent/eef2b23a-95e5-491f-8085-5d41d5d4d65d>
-  PrefabRemaps:
-    []
-  Name: MessagingBridge
-  Enabled: true
-  ScriptAsset: !<reference> 9aa407db-2872-4afc-a162-cf7faf2a0f29
-  ScriptInputsDefault:
-    {}
-  ScriptTypesDefault:
-    {}
-  ScriptInputs:
-    "":
-      {}
-  ScriptTypes:
-    "":
-      {}
 - !<SceneObject/f0394c5d-4c44-4c65-a77c-e1c7e05ca905>
   PrefabRemaps:
     []

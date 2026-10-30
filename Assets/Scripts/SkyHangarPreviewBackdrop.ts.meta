@@ -1,0 +1,65 @@
+- !<AssetImportMetadata/7f0521c8-1861-43ae-b222-baf60e6a5e6c>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 39208e81-0683-4b79-acf5-e3cd3a051b34
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 39208e81-0683-4b79-acf5-e3cd3a051b34
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> aacad189-8857-4379-98a5-122a652a80e9
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/aacad189-8857-4379-98a5-122a652a80e9>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 709355a6-70f9-4636-baba-7ad7ee1c0edb
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    autoSunset: false
+    cameraObject: false
+    skyMaterial: false
+    sunsetDurationSec: false
+    timeOfDay: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      skyMaterial: !<reference.Material> 00000000-0000-0000-0000-000000000000
+      timeOfDay: 0.500000
+      autoSunset: false
+      sunsetDurationSec: !<float> 30.000000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarPreviewBackdrop – procedural sky</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"References"}'
+    - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject (the sky follows its position, never its rotation)"}'
+    - '// @input Asset.Material skyMaterial {"hint":"Unlit material with a base texture slot (SH_SkyTex); cloned per sky layer"}'
+    - '// @ui {"widget":"group_end"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @ui {"widget":"group_start", "label":"Time of Day"}'
+    - '// @input float timeOfDay = 0.5 {"hint":"0 = day, 0.5 = dusk, 1 = night", "widget":"slider", "min":0, "max":1, "step":0.01}'
+    - '// @input bool autoSunset {"hint":"Animate Time of Day from 0 (day) to 1 (night) once, starting when the Lens starts"}'
+    - '// @input float sunsetDurationSec = 30 {"hint":"Seconds the sunset takes from day to night"}'
+    - '// @ui {"widget":"group_end"}'

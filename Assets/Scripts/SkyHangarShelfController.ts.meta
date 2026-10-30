@@ -71,7 +71,7 @@
     - '// @ui {"widget":"separator"}'
     - '// @ui {"widget":"group_start", "label":"Settings"}'
     - '// @input vec3 openOffset = "{0, -12, -100}" {"hint":"Shelf centre relative to the eyes when opened (x right, y up, -z ahead), cm"}'
-    - '// @input float visibleSlots = 5 {"hint":"Models shown on the shelf at a time (one page)", "widget":"slider", "min":3, "max":8, "step":1}'
+    - '// @input float visibleSlots = 3 {"hint":"Models shown on the shelf at a time (one page)", "widget":"slider", "min":3, "max":8, "step":1}'
     - '// @input float standSpacingCm = 13 {"hint":"Horizontal spacing between stands, cm", "widget":"slider", "min":8, "max":30, "step":0.5}'
     - '// @input float modelSpanCm = 10 {"hint":"Size of each model on its stand, cm", "widget":"slider", "min":6, "max":25, "step":0.5}'
     - '// @input float swipeDeg = 3 {"hint":"Sideways ray movement (degrees) that counts as a page swipe", "widget":"slider", "min":1, "max":20, "step":0.5}'

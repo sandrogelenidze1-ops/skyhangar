@@ -10,8 +10,8 @@ import {Interactor, InteractorInputType} from "SpectaclesInteractionKit.lspkg/Co
 import {SkyObjectInfo, SNAPSHOT_UTC} from "./SkyHangarFlightData"
 import {buildModel, styleFor} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController, PullRequest} from "./SkyHangarSkyController"
-import {SkyHangarHeldController} from "./SkyHangarHeldController"
-import {SkyHangarShelfController, ShelfEntry, InspectRequest} from "./SkyHangarShelfController"
+import {SkyHangarHeldController, InspectHooks} from "./SkyHangarHeldController"
+import {SkyHangarShelfController, ShelfEntry, InspectRequest, ShelfTap} from "./SkyHangarShelfController"
 import {SkyHangarRadarController} from "./SkyHangarRadarController"
 import {SkyHangarEdgeArrows} from "./SkyHangarEdgeArrows"
 import {SkyHangarAudioController} from "./SkyHangarAudioController"
@@ -230,6 +230,8 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.held.onSentToSky.add((info) => this.log("sent back to sky " + info.id))
     this.radar.onBlipTap.add((info) => this.onBlipTap(info))
     this.shelf.onInspect.add((req) => this.onInspect(req))
+    this.shelf.onTap.add((tap) => this.onShelfTap(tap))
+    this.infoCard.onView3D.add(() => this.onView3D())
     this.menuBar.onSky.add(() => this.setMode("sky"))
     this.menuBar.onRadar.add(() => this.setMode("radar"))
     this.menuBar.onHangar.add(() => this.setMode("hangar"))
@@ -331,14 +333,51 @@ export class SkyHangarMain extends BaseScriptComponent {
     const id = req.info.id
     this.audio.play("pull")
     this.shelf.setEntryHidden(id, true)
-    this.held.beginInspect(req.info, req.fromWorld, req.interactor, {
+    this.held.beginInspect(req.info, req.fromWorld, req.interactor, this.inspectHooks(id))
+    this.log("inspect " + id)
+  }
+
+  private inspectHooks(id: string): InspectHooks {
+    return {
       slotPos: () => this.shelf.revealEntry(id),
       shelfPos: () => this.shelf.getShelfWorldPos(),
       shelfSpanCm: this.shelf.modelSpanCm,
       onReturned: () => this.shelf.setEntryHidden(id, false),
       onSentToSky: () => this.shelf.removeEntry(id)
-    })
-    this.log("inspect " + id)
+    }
+  }
+
+  /** Quick tap on the shelf: a model goes to inspect mode; any tap while one is inspected sends it back (one at a time). */
+  private onShelfTap(tap: ShelfTap): void {
+    if (this.held.isViewing()) {
+      this.held.endView()
+      return
+    }
+    if (!tap.info || this.held.getState() !== "none") return
+    const id = tap.info.id
+    this.audio.play("tap")
+    this.shelf.setEntryHidden(id, true)
+    this.held.beginView(tap.info, tap.fromWorld, this.inspectHooks(id))
+    this.log("view " + id)
+  }
+
+  /** Info card "View 3D": the sky model comes in front of the user (card stays open); pressing again returns it to the sky. */
+  private onView3D(): void {
+    this.audio.play("tap")
+    if (this.held.isViewing()) {
+      this.held.endView()
+      return
+    }
+    if (this.held.getState() !== "none") {
+      if (this.held.getViewOrigin() === "sky" && this.held.getHeldId() === this.cardId) this.held.sendToSky()
+      return
+    }
+    const info = this.cardId ? this.sky.getInfo(this.cardId) : null
+    if (!info) return
+    const ct = this.cameraObject.getTransform()
+    const from = this.sky.getMarkerWorldPos(info.id) ?? ct.getWorldPosition().add(ct.getWorldRotation().multiplyVec3(new vec3(0, 0, -300)))
+    this.held.beginView(info, from, null)
+    this.log("view3d " + info.id)
   }
 
   private onCollected(info: SkyObjectInfo): void {
@@ -539,6 +578,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     // Radar range labels while the radar is open
     this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])
 
+    this.infoCard.setViewing(this.held.getViewOrigin() === "sky" && this.held.getHeldId() === this.cardId)
     this.sky.assistActive = this.mode === "sky" && this.held.getState() === "none"
     this.pollTapElsewhere()
   }
