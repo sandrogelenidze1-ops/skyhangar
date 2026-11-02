@@ -20,7 +20,7 @@ import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
-import {glassPanel, obj, PALETTE} from "./SkyHangarSharedUI"
+import {glassPanel, obj, PALETTE, setRenderOrderTree} from "./SkyHangarSharedUI"
 import {
   PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
 } from "./SkyHangarUtil"
@@ -433,6 +433,11 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private camYaw(): number { return yawOf(this.camForward()) }
   private handPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, this.handOffset) }
   private padPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, PAD_OFFSET_HANGAR) }
+  /** Render order for the two pads (UI layer, in front of the world-space sky). */
+  applyUiOrder(order: number): void {
+    for (const p of [this.hangarPad, this.skyPad]) if (p) setRenderOrderTree(p.root, order)
+  }
+
   private skyPadPos(yaw: number): vec3 { return yawOffset(this.camPos(), yaw, PAD_OFFSET_SKY) }
   /** Distance from the pad centre to the held model projected onto the pad's own depth (so hold depth does not matter). */
   private padMiss(model: vec3, pad: vec3): number {

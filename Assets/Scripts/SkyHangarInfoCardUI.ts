@@ -21,7 +21,7 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {MapTrack, RouteMap} from "./SkyHangarRouteMap"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight,
+  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, styleGlass,
   FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
@@ -184,6 +184,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   private tabRoute!: Button
   private tabVisuals: {[k: string]: {fill: SceneObject; ec: ElementContent}} | null = null
   private map!: RouteMap
+  private solidBacking = false
   private routeW = 30
   private routeH = 9
   private routeProgress = 0
@@ -274,6 +275,13 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     this.placeInFront()
     this.sceneObject.getTransform().setWorldPosition(fromWorld)
     this.setTab(this.defaultTab === "route" ? "route" : "info")
+  }
+
+  /** More opaque card background (about 90%) while the radar is up, so radar blips and glyphs never show through the text. */
+  setSolidBacking(on: boolean): void {
+    if (on === this.solidBacking || !this.glass) return
+    this.solidBacking = on
+    styleGlass(this.glass, this.glass.size, {tint: new vec4(CARD_TINT.x, CARD_TINT.y, CARD_TINT.z, on ? 0.9 : CARD_TINT.w), glow: CARD_GLOW, edgeCm: 0.14, radiusCm: RADIUS.l * (this.readDistanceCm / 110)})
   }
 
   /** Route tab map: fit to the track, draw coastline + route, and put the dot where the vehicle is now. */

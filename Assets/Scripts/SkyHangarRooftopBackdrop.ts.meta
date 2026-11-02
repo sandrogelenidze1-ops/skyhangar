@@ -30,10 +30,8 @@
   ScriptInputsHidden:
     cameraObject: false
     eyeHeightCm: false
-    parapetHeightCm: false
     showBackdrop: false
     sky: false
-    terraceHalfCm: false
   ScriptTypesHidden:
     {}
   ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
@@ -47,13 +45,11 @@
       sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
       showBackdrop: true
       eyeHeightCm: !<float> 160.000000
-      parapetHeightCm: !<float> 110.000000
-      terraceHalfCm: !<float> 280.000000
   ScriptTypes:
     -
       {}
   InputLines:
-    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarRooftopBackdrop – preview-only dusk rooftop</span>"}'
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarRooftopBackdrop – preview-only city and rooftop</span>"}'
     - '// @ui {"widget":"separator"}'
     - '// @ui {"widget":"group_start", "label":"References"}'
     - '// @input SceneObject cameraObject {"hint":"The main camera SceneObject"}'
@@ -62,7 +58,5 @@
     - '// @ui {"widget":"separator"}'
     - '// @ui {"widget":"group_start", "label":"Settings"}'
     - '// @input bool showBackdrop = true {"hint":"Show the backdrop (preview only — turn off before publishing to Specs)"}'
-    - '// @input float eyeHeightCm = 160 {"hint":"Eye height above the terrace floor, cm", "widget":"slider", "min":120, "max":200, "step":1}'
-    - '// @input float parapetHeightCm = 110 {"hint":"Parapet height above the floor, cm", "widget":"slider", "min":60, "max":150, "step":1}'
-    - '// @input float terraceHalfCm = 280 {"hint":"Half size of the square terrace (parapet distance from the user), cm", "widget":"slider", "min":120, "max":600, "step":10}'
+    - '// @input float eyeHeightCm = 160 {"hint":"Eye height above the roof floor, cm", "widget":"slider", "min":120, "max":200, "step":1}'
     - '// @ui {"widget":"group_end"}'

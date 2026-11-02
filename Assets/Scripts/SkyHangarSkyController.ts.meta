@@ -35,6 +35,8 @@
     cylinderMesh: false
     dragDelaySeconds: false
     dragStartDeg: false
+    fadeEndElevDeg: false
+    fadeStartElevDeg: false
     glyphSpanCm: false
     helicopterColor: false
     litMaterial: false
@@ -73,6 +75,8 @@
       satelliteCyan: !<Vec4> {x: 0.350000, y: 0.900000, z: 1.000000, w: 1.000000}
       trailTint: !<Vec4> {x: 0.450000, y: 1.000000, z: 0.600000, w: 1.000000}
       trailWidthCm: 1.400000
+      fadeStartElevDeg: !<float> 14.000000
+      fadeEndElevDeg: !<float> 0.000000
       reticleSizeCm: !<float> 24.000000
       tapMaxSeconds: 0.300000
       dragStartDeg: !<float> 3.000000
@@ -104,6 +108,8 @@
     - '// @input vec4 satelliteCyan = "{0.35, 0.9, 1.0, 1.0}" {"hint":"Satellite glyph colour", "widget":"color"}'
     - '// @input vec4 trailTint = "{0.45, 1.0, 0.6, 1.0}" {"hint":"Trail colour (green per the style guide); alpha fades along the path", "widget":"color"}'
     - '// @input float trailWidthCm = 1.4 {"hint":"Trail line width at the dome, cm (thin)", "widget":"slider", "min":0.3, "max":5, "step":0.1}'
+    - '// @input float fadeStartElevDeg = 14 {"hint":"Trails are fully opaque at and above this elevation (deg)", "widget":"slider", "min":1, "max":40, "step":0.5}'
+    - '// @input float fadeEndElevDeg {"hint":"Trails have faded to nothing at this elevation (deg); smoothstep between the two", "widget":"slider", "min":-5, "max":20, "step":0.5}'
     - '// @input float reticleSizeCm = 24 {"hint":"Aim reticle size (corner-bracket box side), cm at the dome", "widget":"slider", "min":8, "max":60, "step":1}'
     - '// @input float tapMaxSeconds = 0.3 {"hint":"A pinch released faster than this (s) without moving counts as a tap", "widget":"slider", "min":0.1, "max":0.8, "step":0.05}'
     - '// @input float dragStartDeg = 3 {"hint":"Ray movement (deg) during a pinch that turns it into a pull", "widget":"slider", "min":1, "max":15, "step":0.5}'

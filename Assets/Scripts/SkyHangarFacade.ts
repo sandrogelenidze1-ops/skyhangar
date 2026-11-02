@@ -1,0 +1,272 @@
+// SkyHangarFacade.ts
+// Owns: the procedural facade atlases for the PREVIEW-ONLY city (used by SkyHangarRooftopBackdrop). There are only FIVE atlas textures, one per
+// horizon-step compensation level, generated once at startup (and again only when Time of Day changes, at most ten times a second). Each atlas holds
+// every building style: per style 36 window-bay variants (plain windows with different lit thresholds, window + AC box, window + balcony with railing,
+// fire escape, ground-floor shopfront with awning, light-left / shaded-right / light-top edge bays) plus a row of solid cells (wall, shaded wall,
+// parapet cap, metal, tank, AC). Sills, railings, awnings and floor bands are baked into the texture, never separate objects. Per-building variation
+// comes from which style and which cells the UVs pick. Windows flicker by repainting just the two flicker columns of each style (a small rectangle).
+// Every colour is lifted to the time-of-day luminance floor and the horizon-step compensation is baked per atlas. All opaque, all procedural.
+
+import {minLuminance} from "./SkyHangarUtil"
+
+type RGB = [number, number, number]
+
+export const BAY_W = 20
+export const BAY_H = 24
+export const ATLAS_COLS = 12
+export const ROWS_PER_STYLE = 4 // 3 variant rows + 1 solid row
+export const ATLAS_W = BAY_W * ATLAS_COLS
+
+export interface FacadeStyle {
+  name: string
+  wall: RGB
+  frame: RGB
+  accent: RGB // awning stripes
+}
+
+// Realistic, muted city: ~70% neutral warm concrete / stucco / brick / stone / off-white (0-4), ~25% muted tones (5-8), ~5% one stronger accent (9)
+export const STYLES: FacadeStyle[] = [
+  {name: "concrete", wall: [0.8, 0.76, 0.7], frame: [0.95, 0.94, 0.9], accent: [0.62, 0.45, 0.38]},
+  {name: "stucco", wall: [0.9, 0.83, 0.7], frame: [0.96, 0.95, 0.92], accent: [0.5, 0.62, 0.6]},
+  {name: "brick", wall: [0.72, 0.46, 0.38], frame: [0.93, 0.9, 0.84], accent: [0.85, 0.78, 0.6]},
+  {name: "stone", wall: [0.78, 0.75, 0.7], frame: [0.4, 0.46, 0.52], accent: [0.55, 0.5, 0.45]},
+  {name: "offwhite", wall: [0.93, 0.91, 0.85], frame: [0.42, 0.5, 0.56], accent: [0.6, 0.45, 0.4]},
+  {name: "dustyteal", wall: [0.5, 0.7, 0.68], frame: [0.95, 0.96, 0.94], accent: [0.86, 0.74, 0.52]},
+  {name: "ochre", wall: [0.86, 0.74, 0.52], frame: [0.96, 0.94, 0.88], accent: [0.52, 0.6, 0.7]},
+  {name: "slate", wall: [0.52, 0.6, 0.7], frame: [0.94, 0.95, 0.96], accent: [0.8, 0.72, 0.55]},
+  {name: "sage", wall: [0.64, 0.72, 0.58], frame: [0.95, 0.95, 0.9], accent: [0.78, 0.66, 0.5]},
+  {name: "terracotta", wall: [0.88, 0.5, 0.32], frame: [0.97, 0.94, 0.88], accent: [0.42, 0.55, 0.6]}
+]
+export const NEUTRAL_STYLES = [0, 1, 2, 3, 4]
+export const MUTED_STYLES = [5, 6, 7, 8]
+export const ACCENT_STYLE = 9
+export const ATLAS_H = STYLES.length * ROWS_PER_STYLE * BAY_H
+
+export interface BayVariant {
+  kind: "win" | "ac" | "balc" | "fire" | "shop" | "L" | "R" | "T" | "solid"
+  thr: number // lit threshold: lit when the lit fraction passes it
+  flick: boolean
+  warm: RGB
+}
+const WARM: RGB[] = [[1.0, 0.82, 0.5], [1.0, 0.92, 0.7], [0.78, 0.9, 1.0], [1.0, 0.7, 0.45]]
+export const VARIANTS: BayVariant[] = []
+for (let i = 0; i < 12; i++) VARIANTS.push({kind: "win", thr: (i + 0.5) / 12, flick: i < 2, warm: WARM[i % 4]})
+for (let i = 0; i < 4; i++) VARIANTS.push({kind: "ac", thr: (i + 0.5) / 4, flick: false, warm: WARM[i % 4]})
+for (let i = 0; i < 4; i++) VARIANTS.push({kind: "balc", thr: (i + 0.5) / 4, flick: false, warm: WARM[(i + 1) % 4]})
+for (let i = 0; i < 2; i++) VARIANTS.push({kind: "fire", thr: (i + 0.5) / 2, flick: false, warm: WARM[i]})
+for (let i = 0; i < 2; i++) VARIANTS.push({kind: "shop", thr: (i + 0.3) / 1.6, flick: false, warm: WARM[i]})
+for (let i = 0; i < 3; i++) VARIANTS.push({kind: "L", thr: 0.2 + 0.3 * i, flick: false, warm: WARM[i]})
+for (let i = 0; i < 3; i++) VARIANTS.push({kind: "R", thr: 0.2 + 0.3 * i, flick: false, warm: WARM[i + 1]})
+for (let i = 0; i < 3; i++) VARIANTS.push({kind: "T", thr: 0.2 + 0.3 * i, flick: false, warm: WARM[i]})
+for (let i = 0; i < 12; i++) VARIANTS.push({kind: "solid", thr: 0, flick: false, warm: WARM[0]}) // 36..47: solid row
+
+/** Variant index helpers used by the mesh builder. */
+export const V_WIN = 0, V_AC = 12, V_BALC = 16, V_FIRE = 20, V_SHOP = 22, V_L = 24, V_R = 27, V_T = 30
+export const S_WALL = 36, S_WALLSH = 37, S_CAP = 38, S_METAL = 39, S_TANK = 40, S_AC = 41
+
+export interface FacadeTime {
+  frac: number // fraction of windows lit (0 day, 0.55 dusk, 0.35 night)
+  floor: number // luminance floor
+  tint: RGB // time-of-day multiplier for walls
+  glass: RGB // glass tone
+  t: number // seconds, for flicker
+}
+
+export class FacadeAtlas {
+  tex: Texture
+  data = new Uint8Array(ATLAS_W * ATLAS_H * 4)
+  constructor(public comp: number) {
+    this.tex = ProceduralTextureProvider.createWithFormat(ATLAS_W, ATLAS_H, TextureFormat.RGBA8Unorm)
+  }
+}
+
+const buf = new Float32Array(BAY_W * BAY_H * 3)
+
+function mul(c: number[], k: number): RGB { return [c[0] * k, c[1] * k, c[2] * k] }
+function mixc(a: number[], b: number[], t: number): RGB { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t] }
+function sm(a: number, b: number, x: number): number { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+
+interface Pal {
+  wall: RGB; wallHi: RGB; band: RGB; bandHi: RGB; bandLo: RGB; frame: RGB; accent: RGB; accent2: RGB
+  glassTop: RGB; glassBot: RGB; metal: RGB; acBody: RGB; slot: RGB; cap: RGB; tank: RGB
+}
+
+/** One palette for a style at the given time of day and shade (1 = lit side, 0.78 = shaded side): every colour is lifted to the luminance floor. */
+function makePalette(st: FacadeStyle, ft: FacadeTime, shade: number): Pal {
+  const lift = (c: number[]): RGB => minLuminance(c.map((x) => Math.min(1, x)), ft.floor)
+  const wall0 = [0, 1, 2].map((k) => st.wall[k] * ft.tint[k])
+  const wall = lift(mul(wall0, shade))
+  return {
+    wall,
+    wallHi: lift(mul(wall0, 1.12 * shade)),
+    band: lift(mul(wall0, 1.05 * shade)),
+    bandHi: lift(mul(wall0, 1.16 * shade)),
+    bandLo: lift(mul(wall0, 0.88 * shade)),
+    frame: lift(mul(st.frame.map((x, k) => x * ft.tint[k]), shade)),
+    accent: lift(mul(st.accent.map((x, k) => x * ft.tint[k]), shade)),
+    accent2: lift(mul([1, 0.97, 0.92].map((x, k) => x * ft.tint[k]), shade)),
+    glassTop: lift(mul(ft.glass.map((x) => x * 1.12), shade)),
+    glassBot: lift(mul(ft.glass.map((x) => x * 0.84), shade)),
+    metal: lift(mul([0.5, 0.55, 0.62], shade)),
+    acBody: lift(mul([0.9, 0.92, 0.93], shade)),
+    slot: lift(mul([0.55, 0.58, 0.64], shade)),
+    cap: lift(mul(wall0.map((x) => x * 0.4 + 0.58), shade)),
+    tank: lift(mul([0.82, 0.86, 0.92].map((x, k) => x * ft.tint[k]), shade))
+  }
+}
+
+function put(x: number, y: number, c: number[]): void {
+  if (x < 0 || y < 0 || x >= BAY_W || y >= BAY_H) return
+  const i = (y * BAY_W + x) * 3
+  buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]
+}
+function fill(x0: number, y0: number, x1: number, y1: number, c: number[]): void {
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, c)
+}
+
+function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: FacadeTime): void {
+  const P = v.kind === "R" ? palShade : pal
+  if (v.kind === "solid") {
+    const idx = vi - 36
+    const base = idx === 0 ? pal.wall : idx === 1 ? palShade.wall : idx === 2 ? pal.cap : idx === 3 ? pal.metal : idx === 4 ? pal.tank : idx === 5 ? pal.acBody : pal.wall
+    for (let y = 0; y < BAY_H; y++) fill(0, y, BAY_W - 1, y, mul(base, 1.04 - 0.08 * (y / (BAY_H - 1))))
+    return
+  }
+  // wall with a subtle vertical gradient (lighter at the top, a little darker at the bottom)
+  for (let y = 0; y < BAY_H; y++) {
+    const g = 1.05 - 0.1 * (y / (BAY_H - 1))
+    for (let x = 0; x < BAY_W; x++) put(x, y, mul(P.wall, g))
+  }
+  if (v.kind === "L") fill(0, 0, 1, BAY_H - 1, P.wallHi) // light left edge
+  if (v.kind === "R") fill(BAY_W - 2, 0, BAY_W - 1, BAY_H - 1, P.bandLo) // shaded right edge
+  // floor band at the bottom: highlight line, band, shadow line
+  fill(0, 21, BAY_W - 1, 21, P.bandHi)
+  fill(0, 22, BAY_W - 1, 22, P.band)
+  fill(0, 23, BAY_W - 1, 23, P.bandLo)
+  if (v.kind === "T") {
+    fill(0, 0, BAY_W - 1, 1, P.cap) // light top edge
+    fill(0, 2, BAY_W - 1, 2, P.bandLo)
+  }
+  // how lit this bay is now: smooth in the fraction so nothing pops while the time of day moves
+  let lit = sm(v.thr, v.thr + 0.1, ft.frac)
+  if (v.flick) lit *= 0.78 + 0.22 * Math.sin(ft.t * 3.3 + vi * 1.9)
+  if (v.kind === "shop") {
+    for (let x = 1; x <= 18; x++) fill(x, 3, x, 6, ((x >> 1) & 1) === 0 ? P.accent : P.accent2) // awning stripes
+    fill(1, 7, 18, 7, P.bandLo)
+    for (let y = 8; y <= 20; y++) fill(2, y, 17, y, mixc(mixc(P.glassTop, P.glassBot, (y - 8) / 12), v.warm, lit * 0.9))
+    fill(8, 9, 11, 20, P.frame)
+    fill(9, 10, 10, 20, mixc(P.glassBot, v.warm, lit))
+    fill(2, 8, 17, 8, P.frame)
+    return
+  }
+  // window: frame, glass (top lighter), mullion + transom, sill
+  fill(4, 4, 15, 17, P.frame)
+  for (let y = 5; y <= 16; y++) fill(5, y, 14, y, mixc(mixc(P.glassTop, P.glassBot, (y - 5) / 11), v.warm, lit))
+  fill(9, 5, 10, 16, P.frame)
+  fill(5, 10, 14, 10, P.frame)
+  fill(3, 18, 16, 18, P.bandHi)
+  fill(3, 19, 16, 19, P.bandLo)
+  if (v.kind === "ac") {
+    fill(6, 19, 13, 22, P.acBody)
+    fill(6, 19, 13, 19, P.bandHi)
+    fill(6, 20, 13, 20, P.slot)
+    fill(6, 22, 13, 22, P.slot)
+  } else if (v.kind === "balc") {
+    fill(1, 19, 18, 20, P.bandHi) // balcony slab
+    fill(1, 14, 18, 14, P.metal) // top rail
+    for (let x = 2; x <= 18; x += 2) fill(x, 15, x, 18, P.metal) // balusters
+  } else if (v.kind === "fire") {
+    fill(1, 19, 18, 20, P.metal) // platform
+    fill(1, 15, 18, 15, P.metal)
+    for (let x = 1; x <= 18; x += 3) fill(x, 16, x, 18, P.metal)
+    for (let i = 0; i < 15; i++) fill(2 + i, Math.round(19 - i * 0.62), 3 + i, Math.round(19 - i * 0.62), P.metal) // stair run
+  }
+}
+
+/** Write one painted variant (current contents of `buf`) into an atlas data array at the cell (col, row), compensated for the dim step. */
+function writeCell(d: Uint8Array, col: number, row: number, wgt: number): void {
+  const ox = col * BAY_W, oy = row * BAY_H
+  for (let y = 0; y < BAY_H; y++) {
+    const r = oy + (BAY_H - 1 - y) // texture row 0 is the bottom of the image
+    for (let x = 0; x < BAY_W; x++) {
+      const s = (y * BAY_W + x) * 3
+      const o = (r * ATLAS_W + ox + x) * 4
+      for (let k = 0; k < 3; k++) {
+        let c = buf[s + k]
+        if (wgt > 0) c += (Math.max(0, Math.min(1, (36 + 175 * c) / 202)) - c) * wgt
+        d[o + k] = Math.round(255 * Math.max(0, Math.min(1, c)))
+      }
+      d[o + 3] = 255
+    }
+  }
+}
+
+/** Repaint a whole atlas (every style, every variant): palette lifted to the floor, step compensation baked in. */
+export function paintAtlas(a: FacadeAtlas, ft: FacadeTime): void {
+  for (let si = 0; si < STYLES.length; si++) {
+    const pal = makePalette(STYLES[si], ft, 1)
+    const palShade = makePalette(STYLES[si], ft, 0.78)
+    for (let vi = 0; vi < VARIANTS.length; vi++) {
+      paintBay(VARIANTS[vi], vi, pal, palShade, ft)
+      writeCell(a.data, vi % ATLAS_COLS, si * ROWS_PER_STYLE + Math.floor(vi / ATLAS_COLS), a.comp)
+    }
+  }
+  ;(a.tex.control as ProceduralTextureProvider).setPixels(0, 0, ATLAS_W, ATLAS_H, a.data)
+}
+
+const strip = new Uint8Array(2 * BAY_W * BAY_H * 4)
+/** Flicker: repaint only the two flicker window cells of one style (a 40 x 24 px rectangle) and upload just that rectangle. */
+export function paintFlicker(a: FacadeAtlas, ft: FacadeTime, style: number): void {
+  const pal = makePalette(STYLES[style], ft, 1)
+  const palShade = makePalette(STYLES[style], ft, 0.78)
+  const row = style * ROWS_PER_STYLE
+  for (let vi = 0; vi < 2; vi++) {
+    paintBay(VARIANTS[vi], vi, pal, palShade, ft)
+    writeCell(a.data, vi, row, a.comp)
+  }
+  for (let y = 0; y < BAY_H; y++) {
+    const src = ((row * BAY_H + y) * ATLAS_W) * 4
+    const dst = (y * 2 * BAY_W) * 4
+    for (let k = 0; k < 2 * BAY_W * 4; k++) strip[dst + k] = a.data[src + k]
+  }
+  ;(a.tex.control as ProceduralTextureProvider).setPixels(0, row * BAY_H, 2 * BAY_W, BAY_H, strip)
+}
+
+/** UV rectangle [u0, v0, u1, v1] of a variant of a style, inset a little so bilinear filtering never bleeds into the neighbour. */
+export function variantUV(style: number, vi: number): number[] {
+  const col = vi % ATLAS_COLS, row = style * ROWS_PER_STYLE + Math.floor(vi / ATLAS_COLS)
+  return [(col * BAY_W + 1.5) / ATLAS_W, (row * BAY_H + 1.5) / ATLAS_H, ((col + 1) * BAY_W - 1.5) / ATLAS_W, ((row + 1) * BAY_H - 1.5) / ATLAS_H]
+}
+
+/** Props atlas (one 96 x 32 texture, three cells): AC front grille, AC fan top, louvered vent. Opaque, light metal, slots stay above the floor. */
+export function propsAtlasTexture(floor: number): Texture {
+  const W = 96, H = 32
+  const tex = ProceduralTextureProvider.createWithFormat(W, H, TextureFormat.RGBA8Unorm)
+  const d = new Uint8Array(W * H * 4)
+  const lift = (c: number[]) => minLuminance(c, floor)
+  const body = lift([0.9, 0.92, 0.93]), hi = lift([1, 1, 1]), slot = minLuminance([0.3, 0.33, 0.38], 0.3), edge = lift([0.7, 0.73, 0.78])
+  const comp = (x: number) => Math.max(0, Math.min(1, (36 + 175 * x) / 202)) // the roof is below the horizon step
+  for (let cell = 0; cell < 3; cell++) {
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        let c: number[] = body
+        const border = x < 2 || y < 2 || x >= 30 || y >= 30
+        if (border) c = (x < 1 || y >= 31) ? edge : hi
+        else if (cell === 0) c = (y % 4 === 1 || y % 4 === 2) && x > 3 && x < 28 ? slot : body
+        else if (cell === 2) c = y % 5 < 2 ? slot : (y % 5 === 2 ? hi : body)
+        else {
+          const dx = x - 15.5, dy = y - 15.5, r = Math.hypot(dx, dy), ang = Math.atan2(dy, dx)
+          if (r < 3) c = edge
+          else if (r < 13) c = Math.abs(Math.sin(ang * 3 + r * 0.25)) < 0.22 ? slot : body
+          else if (r < 15) c = r < 14 ? slot : hi
+        }
+        const o = (y * W + cell * 32 + x) * 4
+        d[o] = Math.round(255 * comp(c[0])); d[o + 1] = Math.round(255 * comp(c[1])); d[o + 2] = Math.round(255 * comp(c[2])); d[o + 3] = 255
+      }
+    }
+  }
+  ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, d)
+  return tex
+}
+/** UV rects of the three props cells. */
+export const PROPS_UV = {grille: [1.5 / 96, 1.5 / 32, 30.5 / 96, 30.5 / 32], fan: [33.5 / 96, 1.5 / 32, 62.5 / 96, 30.5 / 32], louver: [65.5 / 96, 1.5 / 32, 94.5 / 96, 30.5 / 32]}

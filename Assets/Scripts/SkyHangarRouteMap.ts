@@ -11,9 +11,13 @@
 import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
 import {AIRPORTS, SNAPSHOT_UTC, SkyObjectInfo} from "./SkyHangarFlightData"
 import {FONT, PALETTE, TEXT, obj, roleSize} from "./SkyHangarSharedUI"
+import {heliTrack} from "./SkyHangarRouteGeo"
 
 const COAST = requireAsset("../Data/coastline.json") as JsonAsset
 const D2R = Math.PI / 180
+const MINT = new vec4(0.498, 0.89, 0.69, 1) // helicopter trail colour (same as the sky)
+const INK = new vec4(0.07, 0.1, 0.13, 1)
+const NICE_KM = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20]
 
 export interface MapTrack {
   /** The whole line as [lon, lat] points (longitude unwrapped so the line is continuous). */
@@ -24,6 +28,8 @@ export interface MapTrack {
   showAhead: boolean
   originCode: string
   destCode: string
+  /** Helicopters: pts are east / north km on a local view (graticule, scale bar, north arrow) instead of lon / lat on the world map. */
+  local?: {sparse: boolean}
 }
 
 // ---------- track building ----------
@@ -90,6 +96,10 @@ export function buildTrack(info: SkyObjectInfo): MapTrack {
     const pts: vec2[] = []
     for (let i = 0; i <= 60; i++) pts.push(tleSubpoint(info.tle, t0 + (i / 60 - 0.5) * periodS * 1000))
     return {pts: unwrap(pts), at: (el) => Math.max(0, Math.min(1, 0.5 + el / periodS)), showAhead: true, originCode: "", destCode: ""}
+  }
+  if (info.kind === "helicopter") {
+    const ht = heliTrack(info)
+    if (ht && ht.km.length >= 2) return {pts: ht.km, at: () => 1, showAhead: false, originCode: "", destCode: "", local: {sparse: ht.sparse}}
   }
   // Helicopter (or a plane without airport data): dead-reckon the flown path back along heading and speed.
   const PAST_MIN = 15
@@ -170,6 +180,13 @@ export class RouteMap {
   private originDot: SceneObject
   private destDot: SceneObject
   private halo: SceneObject
+  private grid: Layer
+  private marks: Layer
+  private heliGlyph: SceneObject
+  private dotRR!: RoundedRectangle
+  private haloRR!: RoundedRectangle
+  private local = false
+  private heading = 0
   private dot: SceneObject
   private codes: Text[] = []
   private track: MapTrack | null = null
@@ -203,11 +220,15 @@ export class RouteMap {
     this.coast = layer("MapCoastline", 0, new vec4(1, 1, 1, 0.5))
     this.ahead = layer("MapRouteAhead", 0.05, new vec4(1, 1, 1, 0.55))
     this.done = layer("MapRouteFlown", 0.1, new vec4(1, 1, 1, 1))
+    this.grid = layer("MapGrid", 0.02, new vec4(1, 1, 1, 0.13))
+    this.marks = layer("MapMarks", 0.12, new vec4(1, 1, 1, 0.85))
     const k = D / 110
+    let lastRR!: RoundedRectangle
     const disc = (name: string, size: number, fill: vec4, border: vec4 | null, z: number): SceneObject => {
       const so = obj(root, name, new vec3(0, 0, z))
       const r = so.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
       r.initialize()
+      lastRR = r
       r.size = new vec2(size, size)
       r.cornerRadius = size / 2
       r.backgroundColor = fill
@@ -221,8 +242,28 @@ export class RouteMap {
     this.originDot = disc("MapOriginDot", 1.2 * k, TEXT.primary, PALETTE.accent, 0.2)
     this.destDot = disc("MapDestDot", 1.2 * k, TEXT.primary, PALETTE.accent, 0.2)
     this.halo = disc("MapVehicleHalo", 2.8 * k, new vec4(PALETTE.accent.x, PALETTE.accent.y, PALETTE.accent.z, 0.4), null, 0.25)
+    this.haloRR = lastRR
     this.dot = disc("MapVehicleDot", 1.5 * k, TEXT.primary, PALETTE.accent, 0.3)
-    for (const nm of ["MapOriginCode", "MapDestCode"]) {
+    this.dotRR = lastRR
+    // Top-down helicopter glyph (body, tail boom, tail rotor, main rotor) that sits on the position dot in the local view.
+    this.heliGlyph = obj(root, "MapHeliGlyph", new vec3(0, 0, 0.35))
+    const part = (name: string, w: number, h: number, x: number, y: number, rotDeg: number, z: number) => {
+      const so = obj(this.heliGlyph, name, new vec3(x * k, y * k, z))
+      const r = so.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+      r.initialize()
+      r.size = new vec2(w * k, h * k)
+      r.cornerRadius = (Math.min(w, h) * k) / 2
+      r.backgroundColor = INK
+      so.getTransform().setLocalRotation(quat.angleAxis(rotDeg * D2R, vec3.forward()))
+    }
+    part("Body", 1.1, 0.7, 0, 0, 0, 0)
+    part("TailBoom", 0.95, 0.16, -0.95, 0, 0, 0)
+    part("TailRotor", 0.12, 0.45, -1.4, 0.1, 0, 0)
+    part("MainRotor", 2.2, 0.12, 0, 0, 30, 0.01)
+    this.heliGlyph.enabled = false
+    this.grid.so.enabled = false
+    this.marks.so.enabled = false
+    for (const nm of ["MapOriginCode", "MapDestCode", "MapNote"]) {
       const so = obj(root, nm, new vec3(0, 0, 0.2))
       const t = so.createComponent("Component.Text") as Text
       t.text = ""
@@ -244,6 +285,11 @@ export class RouteMap {
   /** Fit the map to the track (with a margin), then draw the coastline, route and dot. */
   show(track: MapTrack, elapsedS: number = 0): void {
     this.track = track
+    this.setLocal(!!track.local)
+    if (track.local) {
+      this.showLocal(track, elapsedS)
+      return
+    }
     let minLon = 1e9, maxLon = -1e9, minLat = 1e9, maxLat = -1e9
     for (const p of track.pts) {
       minLon = Math.min(minLon, p.x); maxLon = Math.max(maxLon, p.x)
@@ -275,6 +321,88 @@ export class RouteMap {
     this.update(elapsedS)
   }
 
+  /** Switches the shared pieces between the world map style and the helicopter's local view. */
+  private setLocal(on: boolean): void {
+    this.local = on
+    this.heliGlyph.enabled = on
+    if (on) this.coast.so.enabled = false
+    else {
+      this.grid.so.enabled = false
+      this.marks.so.enabled = false
+      this.codes[2].text = ""
+    }
+    this.done.rmv.mainMaterial.mainPass.baseColor = on ? MINT : new vec4(1, 1, 1, 1)
+    this.dotRR.backgroundColor = on ? MINT : TEXT.primary
+    this.haloRR.backgroundColor = on ? new vec4(MINT.x, MINT.y, MINT.z, 0.35) : new vec4(PALETTE.accent.x, PALETTE.accent.y, PALETTE.accent.z, 0.4)
+    this.dot.getTransform().setLocalScale(on ? new vec3(1.8, 1.8, 1.8) : vec3.one())
+    this.halo.getTransform().setLocalScale(on ? new vec3(1.5, 1.5, 1.5) : vec3.one())
+  }
+
+  /** Helicopter view: zoomed to its own track (km), light graticule, scale bar, north arrow, start dot, mint path. */
+  private showLocal(track: MapTrack, elapsedS: number): void {
+    const pts = track.pts
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9
+    for (const p of pts) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+    }
+    this.cLon = (minX + maxX) / 2
+    this.cLat = (minY + maxY) / 2
+    this.cosL = 1
+    const spanX = Math.max(1.5, maxX - minX), spanY = Math.max(1.5, maxY - minY)
+    const mx = Math.max(2.5, this.w * 0.1)
+    const my = 3.4 // room for the scale bar and the north arrow
+    this.scale = Math.min((this.w - 2 * mx) / spanX, (this.h - 2 * my) / spanY) // cm per km
+    const hxKm = this.hx / this.scale, hyKm = this.hy / this.scale
+    const pick = (target: number) => {
+      let b = NICE_KM[0]
+      for (const v of NICE_KM) if (v <= target) b = v
+      return b
+    }
+    // Graticule
+    const step = pick(Math.min(hxKm, hyKm) * 2 / 3)
+    const g = new Strokes()
+    for (let gx = Math.ceil((this.cLon - hxKm) / step) * step; gx <= this.cLon + hxKm; gx += step) {
+      const X = (gx - this.cLon) * this.scale
+      g.add(new vec2(X, -this.hy), new vec2(X, this.hy), 0.03)
+    }
+    for (let gy = Math.ceil((this.cLat - hyKm) / step) * step; gy <= this.cLat + hyKm; gy += step) {
+      const Y = (gy - this.cLat) * this.scale
+      g.add(new vec2(-this.hx, Y), new vec2(this.hx, Y), 0.03)
+    }
+    this.grid.so.enabled = !g.empty
+    if (!g.empty) this.grid.rmv.mesh = g.mesh()
+    // Scale bar (bottom left) and north arrow (top right)
+    const m = new Strokes()
+    const barKm = pick(hxKm * 2 * 0.3)
+    const bx = -this.hx + 1.2, by = -this.hy + 1.4, bl = barKm * this.scale
+    m.add(new vec2(bx, by), new vec2(bx + bl, by), 0.07)
+    m.add(new vec2(bx, by - 0.4), new vec2(bx, by + 0.4), 0.07)
+    m.add(new vec2(bx + bl, by - 0.4), new vec2(bx + bl, by + 0.4), 0.07)
+    const ax = this.hx - 1.6, ay = this.hy - 2.0
+    m.add(new vec2(ax, ay - 2.2), new vec2(ax, ay), 0.07)
+    m.add(new vec2(ax - 0.55, ay - 0.95), new vec2(ax, ay), 0.07)
+    m.add(new vec2(ax + 0.55, ay - 0.95), new vec2(ax, ay), 0.07)
+    this.marks.so.enabled = true
+    this.marks.rmv.mesh = m.mesh()
+    const put = (t: Text, x: number, y: number, s: string) => {
+      t.text = s
+      t.getSceneObject().getTransform().setLocalPosition(new vec3(x, y, 0.2))
+    }
+    put(this.codes[0], bx + bl / 2, by + 0.95, barKm < 1 ? Math.round(barKm * 1000) + " m" : barKm + " km")
+    put(this.codes[1], ax, ay + 1.0, "N")
+    put(this.codes[2], -this.hx + 6.5, this.hy - 1.0, (track.local as {sparse: boolean}).sparse ? "Recent track only" : "")
+    // Start dot at the oldest point; the position dot and glyph follow update()
+    const o = this.proj(pts[0])
+    this.originDot.enabled = true
+    this.originDot.getTransform().setLocalPosition(new vec3(o.x, o.y, 0.2))
+    this.destDot.enabled = false
+    const a = pts[pts.length - 1], b = pts[Math.max(0, pts.length - 4)]
+    this.heading = Math.atan2(a.y - b.y, a.x - b.x)
+    this.lastBuiltEl = -1e9
+    this.update(elapsedS)
+  }
+
   /** Move the dot (every frame) and redraw the flown / ahead lines (about once a second). */
   update(elapsedS: number): void {
     const tr = this.track
@@ -284,6 +412,10 @@ export class RouteMap {
     const p = this.proj(pointAt(tr.pts, f))
     this.dot.getTransform().setLocalPosition(new vec3(p.x, p.y, 0.3))
     this.halo.getTransform().setLocalPosition(new vec3(p.x, p.y, 0.25))
+    if (this.local) {
+      this.heliGlyph.getTransform().setLocalPosition(new vec3(p.x, p.y, 0.35))
+      this.heliGlyph.getTransform().setLocalRotation(quat.angleAxis(this.heading, vec3.forward()))
+    }
     if (elapsedS - this.lastBuiltEl < 1) return
     this.lastBuiltEl = elapsedS
     const pts = tr.pts.map((q) => this.proj(q))

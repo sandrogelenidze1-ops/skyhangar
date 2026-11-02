@@ -8,7 +8,7 @@
     - !<own> 9d3c5d7e-7290-43fb-98c3-0cfa95ec396d
     - !<own> 081ad248-3ba4-4bda-9715-6966a9a1339a
     - !<own> 58888259-b30e-4e95-84da-a1946a7eaf14
-    - !<own> 279de7b6-e106-415e-9634-71c28b807277
+    - !<own> 7e56b461-c8fd-4f04-81fe-1c6110f47908
   layers: !<Layers/267ee9a7-aff2-4f9d-9a49-f71214747d03>
     userLayers:
       - id: 1
@@ -386,22 +386,6 @@
     - !<own> 05147ea1-cb6b-4629-9484-199a4aa4d92a
   Components:
     []
-- !<ScriptComponent/0b796b65-7a49-4b9c-ac96-66d167246602>
-  PrefabRemaps:
-    []
-  Name: AgentInspectScript
-  Enabled: true
-  ScriptAsset: !<reference> 0b25079c-f5bf-4c6d-96c4-f43b89dfa213
-  ScriptInputsDefault:
-    {}
-  ScriptTypesDefault:
-    {}
-  ScriptInputs:
-    "":
-      {}
-  ScriptTypes:
-    "":
-      {}
 - !<SceneObject/0c355300-e635-47c1-a8c3-5ddef30b8824>
   PrefabRemaps:
     []
@@ -737,21 +721,6 @@
     - !<own> 3a794764-c758-4d72-9d89-bf3ed978113f
   Components:
     []
-- !<SceneObject/279de7b6-e106-415e-9634-71c28b807277>
-  PrefabRemaps:
-    []
-  Name: AiPreviewAgent Handler
-  Enabled: true
-  Layers: 1
-  LocalTransform: !<TransformEntity>
-    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
-    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
-    HasSegmentScaleCompensation: false
-  Children:
-    []
-  Components:
-    - !<own> 0b796b65-7a49-4b9c-ac96-66d167246602
 - !<ScriptComponent/27c3b40f-5422-4ae8-84b5-783cd8441e23>
   PrefabRemaps:
     []
@@ -838,6 +807,22 @@
     []
   Components:
     - !<own> 7520964d-f471-42ba-bd25-65db55e99a0b
+- !<ScriptComponent/2daa135f-9216-4ce3-82e8-c548c04c7fd9>
+  PrefabRemaps:
+    []
+  Name: AgentInspectScript
+  Enabled: true
+  ScriptAsset: !<reference> 0b25079c-f5bf-4c6d-96c4-f43b89dfa213
+  ScriptInputsDefault:
+    {}
+  ScriptTypesDefault:
+    {}
+  ScriptInputs:
+    "":
+      {}
+  ScriptTypes:
+    "":
+      {}
 - !<SceneObject/2dae2a27-8ce6-466a-8bff-622195c1b3a8>
   PrefabRemaps:
     []
@@ -866,6 +851,9 @@
     sweepSeconds: true
     includeSatellites: true
     radarColor: true
+    dockDropCm: true
+    dockScale: true
+    dockOpacity: true
   ScriptTypesDefault:
     {}
   ScriptInputs:
@@ -880,6 +868,9 @@
       sweepSeconds: !<float> 4.000000
       includeSatellites: false
       radarColor: !<Vec4> {x: 0.350000, y: 0.950000, z: 0.600000, w: 1.000000}
+      dockDropCm: !<float> 26.000000
+      dockScale: 0.600000
+      dockOpacity: 0.450000
   ScriptTypes:
     "":
       {}
@@ -1013,7 +1004,6 @@
   Enabled: true
   ScriptAsset: !<reference> 39208e81-0683-4b79-acf5-e3cd3a051b34
   ScriptInputsDefault:
-    timeOfDay: true
     autoSunset: true
     sunsetDurationSec: true
   ScriptTypesDefault:
@@ -1022,7 +1012,7 @@
     "":
       cameraObject: !<reference.SceneObject> 00000000-0000-0065-0000-000000000064
       skyMaterial: !<reference.Material> 533da64e-08fe-4d58-998f-c976293769b1
-      timeOfDay: 0.500000
+      timeOfDay: 0.840000
       autoSunset: false
       sunsetDurationSec: !<float> 30.000000
   ScriptTypes:
@@ -1811,6 +1801,8 @@
     satelliteCyan: true
     trailTint: true
     trailWidthCm: true
+    fadeStartElevDeg: true
+    fadeEndElevDeg: true
     reticleSizeCm: true
     tapMaxSeconds: true
     dragStartDeg: true
@@ -1836,6 +1828,8 @@
       satelliteCyan: !<Vec4> {x: 0.350000, y: 0.900000, z: 1.000000, w: 1.000000}
       trailTint: !<Vec4> {x: 0.450000, y: 1.000000, z: 0.600000, w: 1.000000}
       trailWidthCm: 1.400000
+      fadeStartElevDeg: !<float> 14.000000
+      fadeEndElevDeg: !<float> 0.000000
       reticleSizeCm: !<float> 24.000000
       tapMaxSeconds: 0.300000
       dragStartDeg: !<float> 3.000000
@@ -1860,6 +1854,21 @@
     - !<own> 58ef319f-850e-40dd-8295-e6dc36ab4854
   Components:
     []
+- !<SceneObject/7e56b461-c8fd-4f04-81fe-1c6110f47908>
+  PrefabRemaps:
+    []
+  Name: AiPreviewAgent Handler
+  Enabled: true
+  Layers: 1
+  LocalTransform: !<TransformEntity>
+    Position: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Rotation: {x: 0.000000, y: 0.000000, z: 0.000000}
+    Scale: {x: 1.000000, y: 1.000000, z: 1.000000}
+    HasSegmentScaleCompensation: false
+  Children:
+    []
+  Components:
+    - !<own> 2daa135f-9216-4ce3-82e8-c548c04c7fd9
 - !<SceneObject/7fb3591f-54a2-4aee-b07d-fd10d56538c8>
   PrefabRemaps:
     []

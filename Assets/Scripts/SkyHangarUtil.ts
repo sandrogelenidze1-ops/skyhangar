@@ -187,3 +187,43 @@ export class PartKit {
     for (let i = 0; i < root.getChildrenCount(); i++) PartKit.setMaterialAll(root.getChild(i), material)
   }
 }
+
+/** Luminance floor for the preview backdrop by time of day: Day 0.62, Dusk 0.5, Night 0.38 (w = [day, dusk, night] weights, so it eases smoothly). */
+export function luminanceFloor(w: number[]): number {
+  return 0.62 * w[0] + 0.5 * w[1] + 0.38 * w[2]
+}
+
+/**
+ * Lift a colour to at least `floor` luminance while keeping its hue: scale it up, and if a channel clips, ease the rest toward white.
+ * The preview treats near-black lens pixels as see-through (additive display simulation), so nothing in the backdrop may go below this.
+ */
+export function minLuminance(c: number[], floor: number): [number, number, number] {
+  const lum = (x: number[]) => x[0] * 0.3 + x[1] * 0.4 + x[2] * 0.3
+  const l = lum(c)
+  if (l >= floor) return [c[0], c[1], c[2]]
+  // scale all channels together (hue AND saturation kept); only if a channel clips, desaturate a little (at most 40% of the white mix)
+  const k = floor / Math.max(l, 0.02)
+  const o = [Math.min(1, c[0] * k), Math.min(1, c[1] * k), Math.min(1, c[2] * k)]
+  const f = Math.max(0, (floor - lum(o)) / Math.max(1 - lum(o), 0.01)) * 0.4
+  return [o[0] + (1 - o[0]) * f, o[1] + (1 - o[1]) * f, o[2] + (1 - o[2]) * f]
+}
+
+/**
+ * Compensation for the preview's dim step (editor only). Measured against the preview: a lens colour c (0..1) is shown as about 80 + 175 c
+ * above the editor floor plane's far edge and as 44 + 202 c below it (fitted from sampling both sides, including with compensation on), so
+ * the colour that looks the same below the edge is c' = (36 + 175 c) / 202. That reaches c' = 1 at STEP_MAX_C = 0.95, so practically every colour
+ * can be matched. `weight` (0..1) eases the compensation in over the +-0.5 degree band at the edge.
+ */
+export const STEP_MAX_C = 0.949
+export function horizonStepCompensate(c: number[], weight: number = 1): [number, number, number] {
+  const f = (x: number) => x + (Math.max(0, Math.min(1, (36 + 175 * x) / 202)) - x) * weight
+  return [f(c[0]), f(c[1]), f(c[2])]
+}
+
+/** Brighter luminance floor for LARGE flat surfaces (walls, roof, ground, parapet, door panels): Day 0.65, Dusk 0.55, Night 0.45. */
+export function largeSurfaceFloor(w: number[]): number {
+  return 0.65 * w[0] + 0.55 * w[1] + 0.45 * w[2]
+}
+
+/** Elevation (degrees) of the editor floor plane's far edge, where the preview's dim step sits (about 1.7 degrees below the true horizon). */
+export const EDITOR_EDGE_DEG = -1.67

@@ -13,6 +13,7 @@ import {SkyHangarSkyController, PullRequest} from "./SkyHangarSkyController"
 import {SkyHangarHeldController, InspectHooks} from "./SkyHangarHeldController"
 import {SkyHangarShelfController, ShelfEntry, InspectRequest, ShelfTap} from "./SkyHangarShelfController"
 import {SkyHangarRadarController} from "./SkyHangarRadarController"
+import {UI_RENDER_ORDER, setRenderOrderTree} from "./SkyHangarSharedUI"
 import {SkyHangarEdgeArrows} from "./SkyHangarEdgeArrows"
 import {SkyHangarAudioController} from "./SkyHangarAudioController"
 import {SkyHangarMenuBarUI} from "./SkyHangarMenuBarUI"
@@ -101,6 +102,7 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private mode: SkyMode = "sky"
   private cardId = ""
+  private pinCardSeen = false // the pinned vehicle's card has been opened once; the next tap with it closed unpins
   private collectedCount = 0
   private preloaded = false
   private lastCollectedText = ""
@@ -220,6 +222,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   private start(): void {
     this.sky.onAim.add((info) => this.log("aim " + (info ? info.id : "-")))
     this.sky.onTap.add((info) => this.onSkyTap(info))
+    this.sky.onTapEmpty.add(() => this.onSkyTapEmpty())
     this.sky.onPullStart.add((req) => this.onSkyPull(req))
     this.held.onCollected.add((info) => this.onCollected(info))
     this.held.onThrown.add((info) => {
@@ -260,6 +263,9 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.setRootVisible(this.radar.sceneObject, false)
   }
 
+  private layerTick = 0
+  private lastCardUp = false
+
   private setMode(mode: SkyMode): void {
     this.audio.play("menu")
     this.mode = mode
@@ -268,8 +274,16 @@ export class SkyHangarMain extends BaseScriptComponent {
     if (mode === "hangar") this.shelf.openInFront()
     this.setRootVisible(this.radar.sceneObject, mode === "radar")
     this.setRootVisible(this.shelf.sceneObject, mode === "hangar")
+    this.applyLayering()
     this.arrows.setSuppressed(mode !== "sky")
     this.log("mode " + mode)
+  }
+
+  /** All UI renders in front of every world-space sky element (trails, tags, reticle, markers, arrows). */
+  private applyLayering(): void {
+    for (const o of [this.menuBar.sceneObject, this.infoCard.sceneObject, this.radar.sceneObject, this.shelf.sceneObject, this.shelfUI.sceneObject]) setRenderOrderTree(o, UI_RENDER_ORDER)
+    this.held.applyUiOrder(UI_RENDER_ORDER)
+    this.labels.applyUiOrder()
   }
 
   /** Panels are hidden by scale so UIKit / layout components keep their normal init order. */
@@ -279,12 +293,26 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private onSkyTap(info: SkyObjectInfo): void {
     this.audio.play("tap")
-    // Tap flow: one tap opens the card and pins the trail; tapping the same vehicle again closes both;
-    // tapping another vehicle while a card is open moves the pin and replaces the card.
+    // Pin flow: tap 1 pins (trail stays); tap 2 on the pinned vehicle opens its card; tap 3 closes the card (pin stays);
+    // a further tap on it with the card closed unpins. Another vehicle moves the pin; empty sky unpins (onSkyTapEmpty).
     if (this.cardId === info.id) {
       this.hideCard()
       return
     }
+    if (this.sky.getPinnedId() !== info.id) {
+      if (this.cardId) this.hideCard()
+      this.sky.setPinnedTrail(info.id)
+      this.pinCardSeen = false
+      this.log("pin " + info.id)
+      return
+    }
+    if (this.pinCardSeen) {
+      this.sky.setPinnedTrail("")
+      this.pinCardSeen = false
+      this.log("unpin " + info.id)
+      return
+    }
+    this.pinCardSeen = true
     const ct = this.cameraObject.getTransform()
     const camPos = ct.getWorldPosition()
     const camRot = ct.getWorldRotation()
@@ -311,14 +339,23 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.infoCard.showInfo(this.cardContent(info), from, from) // same fixed spot as sky taps
     this.populateCardExtras(info)
     this.cardId = info.id
+    this.pinCardSeen = true
     this.sky.setPinnedTrail(info.id)
     this.log("card(radar) " + info.id)
   }
 
+  /** Closes the card only; the trail stays pinned. */
   private hideCard(): void {
     this.infoCard.hide()
     this.cardId = ""
+  }
+
+  private onSkyTapEmpty(): void {
+    this.audio.play("tap")
+    if (this.cardId) this.hideCard()
+    if (this.sky.getPinnedId()) this.log("unpin (empty sky)")
     this.sky.setPinnedTrail("")
+    this.pinCardSeen = false
   }
 
   private onSkyPull(req: PullRequest): void {
@@ -548,13 +585,12 @@ export class SkyHangarMain extends BaseScriptComponent {
     }
 
     // Aim reticle label: only for the aimed object; hidden while its own card is open (the card says it all).
-    const aimed = this.sky.getAimedId()
+    const aimed = this.sky.getAimedId() || this.sky.getPinnedId()
     const aimedInfo = aimed ? this.sky.getInfo(aimed) : null
     const showReticleLabel = !!aimedInfo && !(this.infoCard.isVisible() && this.infoCard.getShownId() === aimed)
     if (showReticleLabel && aimedInfo) {
-      const p = this.sky.getMarkerWorldPos(aimed)!
-      const right = this.cameraObject.getTransform().getWorldRotation().multiplyVec3(vec3.right())
-      this.labels.setReticleLabel(this.reticleLines(aimedInfo), p.add(right.uniformScale(this.sky.reticleSizeCm * 0.7)), true)
+      const p = this.sky.getReticleWorldPos() ?? this.sky.getMarkerWorldPos(aimed)!
+      this.labels.setReticleLabel(this.reticleLines(aimedInfo), p, true, this.sky.reticleSizeCm * 0.7, this.sky.getRouteSamplesWorld(aimed))
     } else {
       this.labels.setReticleLabel(null, vec3.zero(), false)
     }
@@ -574,6 +610,18 @@ export class SkyHangarMain extends BaseScriptComponent {
     const busyHand = hs === "flyingIn" || hs === "held" || hs === "collecting" || hs === "thrown" || hs === "returning" || hs === "returningToSky"
     this.arrows.setSuppressed(this.mode !== "sky" || busyHand || this.infoCard.isVisible())
     this.labels.setArrowLabel(this.arrows.getNearestLabel(), this.arrows.getNearestLabelWorldPos(), this.arrows.isArrowVisible())
+
+    // Radar / card up: the sky's airport tags and reticle label fade out; the radar slides under an open card; the card
+    // backing goes more opaque while the radar is visible.
+    const cardUp = this.infoCard.isVisible()
+    this.labels.setSkyTagsVisible(!(this.mode === "radar" || cardUp))
+    this.radar.setDocked(this.mode === "radar" && cardUp)
+    this.infoCard.setSolidBacking(this.mode === "radar")
+    this.labels.setRadarDim(this.radar.getDim())
+    if (cardUp !== this.lastCardUp || this.layerTick++ % 60 === 0) {
+      this.lastCardUp = cardUp
+      this.applyLayering()
+    }
 
     // Radar range labels while the radar is open
     this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])

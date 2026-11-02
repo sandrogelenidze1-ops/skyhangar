@@ -6,7 +6,7 @@
 // this script only hides that script's old banded dusk dome and clouds once they exist.
 // Must not: touch any UI, card, trail, marker, hangar or radar object.
 
-import {makeObj} from "./SkyHangarUtil"
+import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance, horizonStepCompensate, STEP_MAX_C, EDITOR_EDGE_DEG} from "./SkyHangarUtil"
 
 const DEG = Math.PI / 180
 const R = 6000
@@ -18,6 +18,14 @@ type RGB = [number, number, number]
 const DAY_STOPS: number[][] = [[-6, 0.4, 0.64, 0.92], [0, 0.44, 0.69, 0.95], [10, 0.3, 0.58, 0.94], [30, 0.17, 0.45, 0.88], [60, 0.1, 0.35, 0.8], [90, 0.07, 0.28, 0.72]]
 const DUSK_STOPS: number[][] = [[-6, 0.95, 0.42, 0.18], [0, 1.0, 0.55, 0.24], [7, 0.92, 0.4, 0.4], [20, 0.55, 0.3, 0.6], [45, 0.2, 0.18, 0.46], [90, 0.07, 0.1, 0.3]]
 // Night: top #0A0F2E, mid #1B2060, horizon #3A2C70, faint city glow #6B3F8F (boosted in saturation at lookup, see nightStop)
+// Ground colour of the lower hemisphere [day, dusk, night]: a mid-tone, hazy ground, never near-black (dark lens pixels are see-through in the preview)
+const GROUND_COLORS: RGB[] = [[0.5, 0.54, 0.6], [0.5, 0.36, 0.44], [0.4, 0.3, 0.52]]
+// The preview dims everything below the horizon by a measured per-channel ratio (146,196,255 -> 124,182,246 at the horizon); below the
+// horizon we multiply by the inverse (editor only: this whole script is disabled on a device), eased over +-0.5 deg so there is no seam.
+const STEP_BAND_DEG = 0.15
+// Where the step really sits: the editor floor plane is finite, and its far edge is about 2 degrees below the true horizon (measured against
+// the roof railing, whose elevations are known). The dim half-plane covers only elevations below this.
+const GROUND_BLEND_DEG = 14 // the horizon colour eases into the ground colour over this many degrees below the horizon
 const NIGHT_STOPS: number[][] = [[-6, 0.42, 0.247, 0.56], [0, 0.42, 0.247, 0.56], [3, 0.3, 0.2, 0.5], [9, 0.227, 0.173, 0.44], [30, 0.106, 0.125, 0.376], [60, 0.07, 0.09, 0.27], [90, 0.039, 0.059, 0.18]]
 
 const SUN_COLORS: RGB[] = [[1.0, 0.96, 0.82], [1.0, 0.62, 0.3], [0.5, 0.55, 0.9]]
@@ -45,7 +53,7 @@ const STAR_BUCKETS: {count: number; size: number[]; alpha: number; col: RGB; twi
 const STAR_DIST = 5500
 const CLOUD_W = 256
 const CLOUD_H = 64
-const CLOUD_EL0 = -4
+const CLOUD_EL0 = 0 // clouds (the only blended layer besides stars / sun / moon) stay above the horizon
 const CLOUD_EL1 = 50
 
 @component
@@ -77,7 +85,7 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
   private root!: SceneObject
   private skyTex!: Texture
   private skyW = 32
-  private skyH = 256
+  private skyH = 1024
   private skyData!: Float32Array
   private skyNoise!: Float32Array
   private sunGlowMat!: Material
@@ -186,8 +194,9 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     p.baseColor = new vec4(1, 1, 1, 1)
     p.blendMode = blended ? BlendMode.Normal : BlendMode.Disabled
     p.twoSided = true
-    p.depthWrite = false
-    p.depthTest = false
+    // the dome is a fully opaque sphere with depth write and depth test on; only the star / cloud / sun / moon layers blend, above the horizon
+    p.depthWrite = !blended
+    p.depthTest = !blended
     return m
   }
 
@@ -210,9 +219,14 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     return this.rng / 4294967296
   }
 
+  private lastTick = -1
+
+  /** Everything here is slow (the sky is at infinity), so it runs at most 10 times a second: head follow, Time of Day, cloud drift, star twinkle. */
   private update(): void {
-    if (this.cameraObject) this.root.getTransform().setWorldPosition(this.cameraObject.getTransform().getWorldPosition())
     const t = getTime()
+    if (t - this.lastTick < 0.1) return
+    this.lastTick = t
+    if (this.cameraObject) this.root.getTransform().setWorldPosition(this.cameraObject.getTransform().getWorldPosition())
     if (this.autoSunset) {
       // runs once from the start of the Lens; the slider value follows so the inspector shows progress
       this.timeOfDay = Math.min(1, t / Math.max(0.1, this.sunsetDurationSec))
@@ -224,20 +238,6 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     if (this.starFade > 0.01) this.updateStars(t)
     const next = this.pendingClouds.pop()
     if (next) this.fillClouds(next.tex, next.seed)
-    if (!this.oldHidden && ++this.frame % 20 === 0) this.hideOldDusk()
-  }
-
-  /** The rooftop script builds its own banded dusk dome and clouds; they would cover this sky, so switch them off. */
-  private hideOldDusk(): void {
-    const roof = findByName(null, "PreviewBackdrop_Rooftop")
-    const far = roof ? findByName(roof, "FarLayer") : null
-    if (!far) return
-    const dome = findByName(far, "DuskSkyDome")
-    const clouds = findByName(far, "Clouds")
-    if (!dome) return
-    dome.enabled = false
-    if (clouds) clouds.enabled = false
-    this.oldHidden = true
   }
 
   private apply(t: number): void {
@@ -261,8 +261,19 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     let i = 0
     for (let y = 0; y < H; y++) {
       const el = ((y + 0.5) / H) * 180 - 90
-      const c0 = stopColor(DAY_STOPS, el), c1 = stopColor(DUSK_STOPS, el), c2 = nightStop(el)
-      const c = [0, 1, 2].map(k => c0[k] * w[0] + c1[k] * w[1] + c2[k] * w[2])
+      // below the horizon the horizon colour eases (smoothly, no line) into the ground colour, which then continues to the nadir
+      const sel = Math.max(el, 0)
+      const c0 = stopColor(DAY_STOPS, sel), c1 = stopColor(DUSK_STOPS, sel), c2 = nightStop(sel)
+      const gk = 1 - smoothstep(-GROUND_BLEND_DEG, 0, el)
+      const gc = minLuminance(mix3(GROUND_COLORS, w), luminanceFloor(w)) // the ground never goes below the time-of-day luminance floor
+      const fk = smoothstep(EDITOR_EDGE_DEG + STEP_BAND_DEG, EDITOR_EDGE_DEG - STEP_BAND_DEG, el) // 1 below the editor floor edge, 0 above, eased over a degree
+      const cm = [0, 1, 2].map(k => (c0[k] * w[0] + c1[k] * w[1] + c2[k] * w[2]) * (1 - gk) + gc[k] * gk)
+      // Colours brighter than STEP_MAX_C cannot be matched below the step, so the sky eases toward that cap as it nears the step (full colour again
+      // 10 degrees above it) and the ground stays under it; then the compensation brightens everything below the step by the measured inverse.
+      const cap = STEP_MAX_C + (1 - STEP_MAX_C) * smoothstep(EDITOR_EDGE_DEG + 1, EDITOR_EDGE_DEG + 10, el)
+      // a touch of extra compensation in a thin line just under the edge: the preview darkens its very first pixels there a little more
+      const bump = 1 + 0.12 * Math.exp(-Math.pow((el - (EDITOR_EDGE_DEG - 0.1)) / 0.12, 2))
+      const c = horizonStepCompensate(minLuminance(cm.map(x => Math.min(x, cap)), largeSurfaceFloor(w)), fk * bump) // whole sky keeps the 0.65 / 0.55 / 0.45 floor, hue kept
       const lin = c
       const slope = [1 / 255, 1 / 255, 1 / 255]
       for (let x = 0; x < W; x++) {
@@ -307,7 +318,7 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     for (let y = 0; y < H; y++) {
       const el = CLOUD_EL0 + ((y + 0.5) / H) * (CLOUD_EL1 - CLOUD_EL0)
       const ce = Math.cos(el * DEG), se = Math.sin(el * DEG)
-      const window = smoothstep(-3, 4, el) * (1 - smoothstep(28, 50, el))
+      const window = smoothstep(0.5, 6, el) * (1 - smoothstep(28, 50, el))
       for (let x = 0; x < W; x++) {
         const a = ((x + 0.5) / W) * Math.PI * 2
         const px = Math.sin(a) * ce, pz = -Math.cos(a) * ce

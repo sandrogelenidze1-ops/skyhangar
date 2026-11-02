@@ -31,6 +31,9 @@
     cameraObject: false
     diameterCm: false
     discRoot: false
+    dockDropCm: false
+    dockOpacity: false
+    dockScale: false
     includeSatellites: false
     openOffset: false
     radarColor: false
@@ -57,6 +60,9 @@
       sweepSeconds: !<float> 4.000000
       includeSatellites: false
       radarColor: !<Vec4> {x: 0.350000, y: 0.950000, z: 0.600000, w: 1.000000}
+      dockDropCm: !<float> 26.000000
+      dockScale: 0.600000
+      dockOpacity: 0.450000
   ScriptTypes:
     -
       {}
@@ -77,4 +83,7 @@
     - '// @input float sweepSeconds = 4 {"hint":"Sweep rotation, seconds per revolution", "widget":"slider", "min":1, "max":10, "step":0.5}'
     - '// @input bool includeSatellites {"hint":"Include satellites as blips (they are not really on a tower radar)"}'
     - '// @input vec4 radarColor = "{0.35, 0.95, 0.6, 1.0}" {"hint":"Ring and sweep colour", "widget":"color"}'
+    - '// @input float dockDropCm = 26 {"hint":"While an info card is open over the radar, the disc slides down by this much, cm", "widget":"slider", "min":0, "max":60, "step":1}'
+    - '// @input float dockScale = 0.6 {"hint":"...and shrinks to this scale", "widget":"slider", "min":0.3, "max":1, "step":0.05}'
+    - '// @input float dockOpacity = 0.45 {"hint":"...and dims to this opacity", "widget":"slider", "min":0.1, "max":1, "step":0.05}'
     - '// @ui {"widget":"group_end"}'

@@ -282,3 +282,26 @@ export function addDivider(parent: SceneObject, parentFlex: FlexLayout, name: st
 }
 
 export {FlexDirection, FlexJustify, FlexAlign}
+
+// ── Layering: every UI element (menu bar, radar, cards, pads, hangar, tooltips) renders in front of every world-space sky
+// element (trails, dots, airport tags, reticle, labels, markers, edge arrows), which all sit at the default order 0.
+export const UI_RENDER_ORDER = 1000
+const baseOrder = new Map<MaterialMeshVisual, number>()
+const VISUAL_TYPES: (keyof ComponentNameMap)[] = ["Component.MaterialMeshVisual", "Component.Text", "Component.Image"] // Text is not returned by the base-type query
+/**
+ * Lifts every mesh / text / image visual under root into the UI band: its own order plus `order`. The relative order inside
+ * a UI (text in front of its glass panel, tiles over the card) is kept; repeated calls do not stack.
+ */
+export function setRenderOrderTree(root: SceneObject, order: number): void {
+  const vis: MaterialMeshVisual[] = []
+  for (const ty of VISUAL_TYPES) for (const c of root.getComponents(ty) as MaterialMeshVisual[]) if (vis.indexOf(c) < 0) vis.push(c)
+  for (const v of vis) {
+    let b = baseOrder.get(v)
+    if (b === undefined) {
+      b = v.renderOrder
+      baseOrder.set(v, b)
+    }
+    if (v.renderOrder !== b + order) v.renderOrder = b + order
+  }
+  for (let i = 0; i < root.getChildrenCount(); i++) setRenderOrderTree(root.getChild(i), order)
+}

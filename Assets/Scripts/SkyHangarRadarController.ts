@@ -65,6 +65,18 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   @hint("Ring and sweep colour")
   @widget(new ColorWidget())
   radarColor: vec4 = new vec4(0.35, 0.95, 0.6, 1.0)
+  @input
+  @hint("While an info card is open over the radar, the disc slides down by this much, cm")
+  @widget(new SliderWidget(0, 60, 1))
+  dockDropCm: number = 26
+  @input
+  @hint("...and shrinks to this scale")
+  @widget(new SliderWidget(0.3, 1, 0.05))
+  dockScale: number = 0.6
+  @input
+  @hint("...and dims to this opacity")
+  @widget(new SliderWidget(0.1, 1, 0.05))
+  dockOpacity: number = 0.45
   @ui.group_end
 
   private blips: Blip[] = []
@@ -73,6 +85,11 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private built = false
   private yawAtOpen = 0
   private sweepMats: Material[] = []
+  private dock = 0 // 0 = normal place, 1 = docked under the card
+  private dockTarget = 0
+  private lastDim = 1
+  private discBasePos = vec3.zero()
+  private dimMats: {m: Material; a: number}[] = []
   private _onBlipTap = new Event<SkyObjectInfo>()
   get onBlipTap(): PublicApi<SkyObjectInfo> { return this._onBlipTap.publicApi() }
 
@@ -99,6 +116,10 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     out.push({pos: t.getWorldTransform().multiplyPoint(new vec3(0, 0.6, -R - 3.2)), text: "AHEAD"})
     return out
   }
+  /** Slide down / shrink / dim under an open info card (true), or return to the normal place and full opacity (false). */
+  setDocked(on: boolean): void { this.dockTarget = on ? 1 : 0 }
+  /** Current opacity factor of the radar (1 = normal, dockOpacity = fully docked). */
+  getDim(): number { return 1 + (this.dockOpacity - 1) * this.dock }
   isOpen(): boolean { return this.built && this.sceneObject.getTransform().getLocalScale().x > 0.01 }
   /** Test hook: act as if the blip was pinched. */
   simulateBlipTap(id: string): boolean {
@@ -168,7 +189,17 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       it.onTriggerEnd.add(() => this._onBlipTap.invoke(info))
       this.blips.push(b)
     }
+    this.discBasePos = this.discRoot.getTransform().getLocalPosition()
+    this.collectDimMats(this.discRoot)
     this.built = true
+  }
+
+  /** Every non-blip material of the disc with its own alpha, so the whole radar can be dimmed together. */
+  private collectDimMats(root: SceneObject): void {
+    if (root.name === "Blips") return
+    const rmv = root.getComponent("Component.RenderMeshVisual") as RenderMeshVisual | null
+    if (rmv && rmv.mainMaterial && !this.dimMats.some((d) => d.m === rmv.mainMaterial)) this.dimMats.push({m: rmv.mainMaterial, a: rmv.mainMaterial.mainPass.baseColor.w})
+    for (let i = 0; i < root.getChildrenCount(); i++) this.collectDimMats(root.getChild(i))
   }
 
   private buildRing(mat: Material, r: number, w: number): void {
@@ -199,6 +230,23 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private update(): void {
     if (!this.built || !this.sceneObject.enabled) return
     const dt = getDeltaTime()
+    if (this.dock !== this.dockTarget) {
+      this.dock += (this.dockTarget - this.dock) * Math.min(1, dt * 7)
+      if (Math.abs(this.dock - this.dockTarget) < 0.003) this.dock = this.dockTarget
+      const e = this.dock * this.dock * (3 - 2 * this.dock)
+      const t = this.discRoot.getTransform()
+      t.setLocalPosition(this.discBasePos.add(new vec3(0, -this.dockDropCm * e, 0)))
+      const sc = 1 + (this.dockScale - 1) * e
+      t.setLocalScale(new vec3(sc, sc, sc))
+    }
+    const dim = this.getDim()
+    if (dim !== this.lastDim) {
+      this.lastDim = dim
+      for (const d of this.dimMats) {
+        const c = d.m.mainPass.baseColor
+        d.m.mainPass.baseColor = new vec4(c.x, c.y, c.z, d.a * dim)
+      }
+    }
     this.sweepAngle = (this.sweepAngle + (dt / this.sweepSeconds) * Math.PI * 2) % (Math.PI * 2)
     this.sweep.getTransform().setLocalRotation(quat.angleAxis(-this.sweepAngle, vec3.up()))
     for (const b of this.blips) {
@@ -208,6 +256,12 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       const k = b.hovered ? 1 : 0.25 + 0.75 * glow
       b.obj.getTransform().setLocalScale(b.hovered ? new vec3(1.5, 1.5, 1.5) : vec3.one())
       setGlyphBrightness(b.glyph, b.base, k)
+      if (dim < 0.999) {
+        for (const m of b.glyph.materials) {
+          const c = m.mainPass.baseColor
+          m.mainPass.baseColor = new vec4(c.x, c.y, c.z, c.w * dim)
+        }
+      }
       if (b.info.kind === "helicopter") spinGlyphRotor(b.glyph, dt, 0.8)
     }
   }

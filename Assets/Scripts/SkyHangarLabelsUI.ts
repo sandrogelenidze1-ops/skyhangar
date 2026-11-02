@@ -6,7 +6,7 @@
 // plus getters for tests. Passive view — positions and strings come from the main script.
 
 import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
-import {GLASS_READABLE, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, glassPanel, makeFlex, obj, rowHeight, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
+import {GLASS_READABLE, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, glassPanel, makeFlex, obj, rowHeight, UI_RENDER_ORDER, setRenderOrderTree, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
 
 interface Label {
   root: SceneObject
@@ -74,6 +74,13 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   private trailVisible = false
   private reticle!: Label
   private reticleRows: Text[] = []
+  private reticleSmoothed: vec3 | null = null
+  private reticleSide = 1
+  private reticleCand = -1
+  private skyFade = 1
+  private skyFadeTarget = 1
+  private radarDim = 1
+  private fadeCache = new Map<Label, {texts: Text[]; base: vec4[]; rects: RoundedRectangle[]}>()
   private hangarPadLabel!: Label
   private skyPadLabel!: Label
   private radarLabels: Label[] = []
@@ -107,18 +114,61 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
    * Aim reticle label block beside the aimed object. lines: [callsign, code · type, ORIGIN > DEST, timing].
    * leftEdgeWorld is where the block's left edge should sit (the main script puts it just right of the brackets).
    */
-  setReticleLabel(lines: string[] | null, leftEdgeWorld: vec3, visible: boolean): void {
+  setReticleLabel(lines: string[] | null, anchorWorld: vec3, visible: boolean, offsetCm: number = 0, avoidWorld: vec3[] = []): void {
     if (!visible || !lines) {
       this.hideLabel(this.reticle)
+      this.reticleSmoothed = null
+      this.reticleCand = -1
       return
     }
     for (let i = 0; i < this.reticleRows.length; i++) {
       const v = lines[i] ?? ""
       if (this.reticleRows[i].text !== v) this.reticleRows[i].text = v
     }
+    // The block goes to whichever side of the brackets keeps the trail (avoidWorld = points along the route) out of it:
+    // right, left, above, below, then the four diagonals; the previous choice is kept while it stays clear.
     const cam = this.cameraObject.getTransform()
-    const right = cam.getWorldRotation().multiplyVec3(vec3.right())
-    this.place(this.reticle, leftEdgeWorld.add(right.uniformScale(this.reticleBlockWidthCm / 2)))
+    const camRot = cam.getWorldRotation()
+    const inv = camRot.invert()
+    const right = camRot.multiplyVec3(vec3.right())
+    const up = camRot.multiplyVec3(vec3.up())
+    const hw = this.reticleBlockWidthCm / 2
+    const D = 400
+    const hh = (2 * rowHeight("Title", D) + 2 * rowHeight("Label", D) + 0.3 * (D / 110)) / 2
+    const margin = 3
+    const o = offsetCm
+    const cands: [number, number][] = [
+      [o + hw, 0], [-(o + hw), 0], [0, o + hh], [0, -(o + hh)],
+      [o * 0.5 + hw, o * 0.5 + hh], [-(o * 0.5 + hw), o * 0.5 + hh], [o * 0.5 + hw, -(o * 0.5 + hh)], [-(o * 0.5 + hw), -(o * 0.5 + hh)]
+    ]
+    const local = inv.multiplyVec3(anchorWorld.sub(cam.getWorldPosition()))
+    const maxX = -local.z * Math.tan(MathUtils.DegToRad * 20)
+    const maxY = -local.z * Math.tan(MathUtils.DegToRad * 17)
+    const pts: vec2[] = avoidWorld.map((q) => {
+      const r = inv.multiplyVec3(q.sub(anchorWorld))
+      return new vec2(r.x, r.y)
+    })
+    const score = (c: [number, number]): number => {
+      let hits = 0
+      if (Math.abs(local.x + c[0]) + hw > maxX || Math.abs(local.y + c[1]) + hh > maxY) hits += 100 // would leave the display
+      const inside = (x: number, y: number) => Math.abs(x - c[0]) < hw + margin && Math.abs(y - c[1]) < hh + margin
+      for (let k = 0; k < pts.length; k++) {
+        if (inside(pts[k].x, pts[k].y)) hits++
+        if (k > 0 && inside((pts[k].x + pts[k - 1].x) / 2, (pts[k].y + pts[k - 1].y) / 2)) hits++
+      }
+      return hits
+    }
+    const scores = cands.map(score)
+    let best = 0
+    for (let i = 1; i < cands.length; i++) if (scores[i] < scores[best]) best = i
+    if (this.reticleCand >= 0 && scores[this.reticleCand] <= scores[best]) best = this.reticleCand
+    this.reticleCand = best
+    const c = cands[best]
+    const target = anchorWorld.add(right.uniformScale(c[0])).add(up.uniformScale(c[1]))
+    this.reticleSide = c[0] >= 0 ? 1 : -1
+    const first = !this.reticleSmoothed
+    this.reticleSmoothed = first ? target : vec3.lerp(this.reticleSmoothed!, target, Math.min(1, getDeltaTime() * 14))
+    this.place(this.reticle, this.reticleSmoothed!)
   }
 
   /** Radar range-ring labels (same type scale). Pass [] to hide. */
@@ -134,6 +184,37 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
       this.place(l, it.pos)
     }
   }
+  /** Airport tags and the reticle label fade out (0.2 s) while the radar or a card is up, and back in when closed. */
+  setSkyTagsVisible(on: boolean): void { this.skyFadeTarget = on ? 1 : 0 }
+  /** Radar range labels follow the radar's dimming. */
+  setRadarDim(a: number): void {
+    if (Math.abs(a - this.radarDim) < 0.002) return
+    this.radarDim = a
+    for (const l of this.radarLabels) this.setAlpha(l, a)
+  }
+  /** UI-layer labels (pads, stamp, radar ranges) render in front of the world-space sky tags. */
+  applyUiOrder(): void {
+    for (const l of [this.hangarPadLabel, this.skyPadLabel, this.stamp, ...this.radarLabels]) setRenderOrderTree(l.root, UI_RENDER_ORDER)
+  }
+
+  private setAlpha(l: Label, a: number): void {
+    let c = this.fadeCache.get(l)
+    if (!c) {
+      c = {texts: [], base: [], rects: []}
+      const walk = (so: SceneObject) => {
+        const t = so.getComponent("Component.Text") as Text | null
+        if (t) { c!.texts.push(t); c!.base.push(t.textFill.color) }
+        const r = so.getComponent(RoundedRectangle.getTypeName()) as RoundedRectangle | null
+        if (r) c!.rects.push(r)
+        for (let i = 0; i < so.getChildrenCount(); i++) walk(so.getChild(i))
+      }
+      walk(l.root)
+      this.fadeCache.set(l, c)
+    }
+    for (let i = 0; i < c.texts.length; i++) c.texts[i].textFill.color = new vec4(c.base[i].x, c.base[i].y, c.base[i].z, c.base[i].w * a)
+    for (const r of c.rects) r.opacity = a
+  }
+
   getRadarLabelTexts(): string[] { return this.radarLabels.filter((l) => l.visible).map((l) => l.big.text) }
 
   /** Labels under the hangar pad and above the Sky pad (visible only while holding). */
@@ -150,14 +231,17 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     if (skyRot) this.skyPadLabel.root.getTransform().setWorldRotation(skyRot)
   }
 
-  setTrailLabels(originPos: vec3, originCode: string, originCity: string, destPos: vec3, destCode: string, destCity: string): void {
+  /** A null position hides that tag (airport out of visible range). */
+  setTrailLabels(originPos: vec3 | null, originCode: string, originCity: string, destPos: vec3 | null, destCode: string, destCity: string): void {
     this.origin.big.text = originCode
     if (this.origin.small) this.origin.small.text = originCity
     this.dest.big.text = destCode
     if (this.dest.small) this.dest.small.text = destCity
-    this.place(this.origin, originPos)
-    this.place(this.dest, destPos)
-    this.trailVisible = true
+    if (originPos) this.place(this.origin, originPos)
+    else this.hideLabel(this.origin)
+    if (destPos) this.place(this.dest, destPos)
+    else this.hideLabel(this.dest)
+    this.trailVisible = !!(originPos || destPos)
   }
 
   hideTrailLabels(): void {
@@ -261,7 +345,13 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     const cam = this.cameraObject.getTransform()
     const camPos = cam.getWorldPosition()
     const camRot = cam.getWorldRotation()
-    for (const l of [this.origin, this.dest, this.stamp, this.reticle, this.hangarPadLabel, this.skyPadLabel, ...this.radarLabels]) {
+    if (this.skyFade !== this.skyFadeTarget) {
+      const step = getDeltaTime() / 0.2
+      this.skyFade = this.skyFade < this.skyFadeTarget ? Math.min(this.skyFadeTarget, this.skyFade + step) : Math.max(this.skyFadeTarget, this.skyFade - step)
+      for (const l of [this.origin, this.dest, this.reticle]) this.setAlpha(l, this.skyFade)
+    }
+    if (this.reticle.visible) l2(this.reticle.root, camRot)
+    for (const l of [this.origin, this.dest, this.stamp, this.hangarPadLabel, this.skyPadLabel, ...this.radarLabels]) {
       if (!l.visible) continue
       if (l === this.hangarPadLabel || l === this.skyPadLabel) continue
       const d = camPos.sub(l.root.getTransform().getWorldPosition())
