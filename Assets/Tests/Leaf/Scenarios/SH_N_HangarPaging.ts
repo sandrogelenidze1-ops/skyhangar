@@ -83,7 +83,7 @@ export class SH_N_HangarPaging extends Scenario {
     await it.releasePinch()
     await sleep(300)
     c.check("drag left on shelf -> next page (page 3)", "real input", main.getHangarPage() === 2, `page ${main.getHangarPage()}`)
-    await it.pinchFor(zone, 80)
+    await it.pinchFor(zone, 60)
     await sleep(300)
     c.check("a pinch without sideways movement does not page", "real input", main.getHangarPage() === 2, `page ${main.getHangarPage()}`)
 

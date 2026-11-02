@@ -68,7 +68,7 @@ export class SH_N_CardFollow extends Scenario {
 
       // C. Tap elsewhere closes it (real pinch on nothing).
       c.check("card still open before tapping elsewhere", "inspection", main.isCardVisible())
-      await it.pinchNothing(120)
+      await it.pinchNothing(60)
       await sleep(200)
       c.check("tap elsewhere (pinch on nothing) closes the card", "real input", !main.isCardVisible())
       main.closeCard()

@@ -18,6 +18,7 @@ import {SH_N_SkyPad} from "./Scenarios/SH_N_SkyPad"
 import {SH_N_HangarPaging} from "./Scenarios/SH_N_HangarPaging"
 import {SH_N_CardFollow} from "./Scenarios/SH_N_CardFollow"
 import {SH_N_MenuInView} from "./Scenarios/SH_N_MenuInView"
+import {SH_T8_InputRules} from "./Scenarios/SH_T8_InputRules"
 
 @component
 export class LeafIndex extends BaseScriptComponent {
@@ -40,5 +41,6 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "n_hangar_paging", typename: SH_N_HangarPaging.getTypeName()},
     {id: "n_card_follow", typename: SH_N_CardFollow.getTypeName()},
     {id: "n_menu_in_view", typename: SH_N_MenuInView.getTypeName()},
+    {id: "t8_input_rules", typename: SH_T8_InputRules.getTypeName()},
   ]
 }

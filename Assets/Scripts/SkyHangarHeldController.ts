@@ -24,6 +24,7 @@ import {glassPanel, obj, PALETTE, setRenderOrderTree} from "./SkyHangarSharedUI"
 import {
   PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
 } from "./SkyHangarUtil"
+import {TAP_REF_DISTANCE_CM, dragStarted, isTap, rayMoveCm as rayMove} from "./SkyHangarInput"
 
 export type HeldState = "none" | "flyingIn" | "held" | "viewing" | "collecting" | "returningToSky" | "returningToShelf" | "thrown" | "returning" | "resting"
 export type ReleaseTarget = "hangar" | "sky" | "throw" | "shelf"
@@ -84,9 +85,6 @@ const GLIDE_END_SPEED = 0.35
 const VIEW_OFFSET = new vec3(0, -2, -40)
 const VIEW_DISTANCE_CM = 40
 const VIEW_TURN_RAD_PER_S = 0.5
-/** A pinch released within this time and movement is a tap; anything longer or further is a drag. */
-const TAP_MAX_SECONDS = 0.15
-const TAP_MAX_MOVE_CM = 1
 const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
 const PAD_OFFSET_SKY = new vec3(16, -5, -80)
 
@@ -471,7 +469,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   /** Movement of the pinch ray since dir0, in cm at the inspect distance. */
   private rayMoveCm(it: Interactor, dir0: vec3): number {
     const d = it.direction
-    return d ? d.normalize().sub(dir0.normalize()).length * VIEW_DISTANCE_CM : 0
+    return d ? rayMove(dir0, d, TAP_REF_DISTANCE_CM) : 0
   }
 
   /** Inspect mode input: a pinch on the model is a tap (< 0.15 s, < 1 cm) or the start of a drag; a tap on empty space also leaves. */
@@ -483,10 +481,10 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       if (!it.isTriggering) {
         this.grabPending = false
         this.interactor = null
-        if (elapsed < TAP_MAX_SECONDS && moved < TAP_MAX_MOVE_CM) this.endView()
+        if (isTap(elapsed, moved)) this.endView()
         return
       }
-      if (elapsed >= TAP_MAX_SECONDS || moved >= TAP_MAX_MOVE_CM) {
+      if (dragStarted(elapsed, moved)) {
         this.grabPending = false
         this.lastWasScripted = false
         this.yawAtPull = this.camYaw()
@@ -504,7 +502,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       } else if (!now && was && this.emptyTap && this.emptyTap.it === it) {
         const tap = this.emptyTap
         this.emptyTap = null
-        if (getTime() - tap.t0 < TAP_MAX_SECONDS && this.rayMoveCm(it, tap.dir0) < TAP_MAX_MOVE_CM) {
+        if (isTap(getTime() - tap.t0, this.rayMoveCm(it, tap.dir0))) {
           this.endView()
           return
         }
@@ -900,15 +898,14 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (!this.grabPending || !this.interactor) return
     const it = this.interactor
     const elapsed = getTime() - this.grabT0
-    const d = it.direction
-    const moved = d ? Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(this.grabDir0.normalize())))) / DEG : 0
+    const moved = this.rayMoveCm(it, this.grabDir0)
     if (!it.isTriggering) {
       this.grabPending = false
       this.interactor = null
-      if (elapsed < 0.3 && moved < 3) this.spinTarget += Math.PI / 2 // quick tap turns the model
+      if (isTap(elapsed, moved)) this.spinTarget += Math.PI / 2 // quick tap turns the model
       return
     }
-    if (elapsed >= 0.3 || moved >= 3) {
+    if (dragStarted(elapsed, moved)) {
       this.grabPending = false
       this.lastWasScripted = false
       this.yawAtPull = this.camYaw()

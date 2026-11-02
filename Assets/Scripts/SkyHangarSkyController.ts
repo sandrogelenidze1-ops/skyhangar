@@ -16,6 +16,7 @@ import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyH
 import {MARK, STROKE, TRAIL} from "./SkyHangarSharedUI"
 import {buildPlaneRoute, getObserver, heliTrack, horizonSpan} from "./SkyHangarRouteGeo"
 import {PartKit, makeObj, skyDir, skyTangent, clamp01, DEG} from "./SkyHangarUtil"
+import {AimCandidate, HOVER_KEEP_SECONDS, TAP_MAX_SECONDS, dragStarted, isTap, pickAimTarget, rayMoveCm} from "./SkyHangarInput"
 
 export interface PullRequest {
   info: SkyObjectInfo
@@ -179,18 +180,6 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   @hint("Aim reticle size (corner-bracket box side), cm at the dome")
   @widget(new SliderWidget(8, 60, 1))
   reticleSizeCm: number = 24
-  @input
-  @hint("A pinch released faster than this (s) without moving counts as a tap")
-  @widget(new SliderWidget(0.1, 0.8, 0.05))
-  tapMaxSeconds: number = 0.3
-  @input
-  @hint("Ray movement (deg) during a pinch that turns it into a pull")
-  @widget(new SliderWidget(1, 15, 0.5))
-  dragStartDeg: number = 3
-  @input
-  @hint("A pinch must be held this long (s) before it can turn into a pull, so a normal tap is never read as a drag")
-  @widget(new SliderWidget(0.05, 0.5, 0.01))
-  dragDelaySeconds: number = 0.15
   @input
   @hint("Aim assist: the vehicle nearest the gaze within this angle (deg) is aimed, and a pinch that hits nothing taps it")
   @widget(new SliderWidget(0, 6, 0.5))
@@ -708,7 +697,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   /** Switching away from the current selection needs the newcomer to be this much closer (deg) to the pointer. */
   private static readonly SWITCH_MARGIN_DEG = 0.8
   /** The selection survives this long (s) after the pointer leaves it. */
-  private static readonly KEEP_SECONDS = 0.3
+  private static readonly KEEP_SECONDS = HOVER_KEEP_SECONDS
 
   /**
    * Decides aimedId each frame: the vehicle under the pinch ray, else (aim assist) the one nearest the gaze within aimAssistDeg.
@@ -724,11 +713,20 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       if (it && d && o) cands.push({m, ang: this.angleTo(m, o, d)})
     }
     if (cands.length === 0 && this.assistActive && this.aimAssistDeg > 0) {
-      const fwd = this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1))
-      for (const m of this.markers) {
-        const ang = this.angleTo(m, camPos, fwd)
-        if (ang < this.aimAssistDeg) cands.push({m, ang})
+      // Snap to the vehicle nearest the pinch ray (closest to the ray, then nearest the camera); gaze when no hand ray is up.
+      let ray: {o: vec3; d: vec3} | null = null
+      for (const it of SIK.InteractionManager.getInteractorsByType(InteractorInputType.All)) {
+        const d = it.direction
+        const o = it.startPoint
+        if (d && o && it.isActive()) { ray = {o, d}; break }
       }
+      if (!ray) ray = {o: camPos, d: this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1))}
+      const aim: AimCandidate[] = this.markers.map((m) => {
+        const p = m.wrapper.getTransform().getWorldPosition()
+        return {id: m.info.id, dir: p.sub(ray!.o).normalize(), distCm: p.distance(camPos)}
+      })
+      const pick = pickAimTarget(aim, ray.d, this.aimAssistDeg)
+      if (pick) cands.push({m: this.markerById[pick.id], ang: pick.angleDeg})
     }
     let best: {m: Marker; ang: number} | null = null
     for (const c of cands) if (!best || c.ang < best.ang) best = c
@@ -772,15 +770,14 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     if (!p) return
     const elapsed = getTime() - p.t0
     const d = p.interactor.direction
-    const moved = d ? Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(p.dir0.normalize())))) / DEG : 0
+    const moved = d ? rayMoveCm(p.dir0, d) : 0
     if (!p.interactor.isTriggering) {
       this.pending = null
-      if (elapsed < this.tapMaxSeconds && (moved < this.dragStartDeg || elapsed < this.dragDelaySeconds)) this._onTap.invoke(p.m.info)
-      else this.firePull(p.m, p.interactor) // a slow release is still a pull
+      if (isTap(elapsed, moved)) this._onTap.invoke(p.m.info)
+      else this.firePull(p.m, p.interactor) // anything slower or further is a drag / hold
       return
     }
-    // A drag needs both a short hold and a little movement; holding still for tapMaxSeconds also starts the pull.
-    if (elapsed >= this.tapMaxSeconds || (elapsed >= this.dragDelaySeconds && moved >= this.dragStartDeg)) {
+    if (dragStarted(elapsed, moved)) {
       this.pending = null
       this.firePull(p.m, p.interactor)
     }
@@ -790,13 +787,12 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const p = this.pendingEmpty
     if (!p) return
     if (p.interactor.isTriggering) {
-      if (getTime() - p.t0 >= this.tapMaxSeconds || p.interactor.currentInteractable !== null) this.pendingEmpty = null
+      if (getTime() - p.t0 >= TAP_MAX_SECONDS || p.interactor.currentInteractable !== null) this.pendingEmpty = null
       return
     }
     this.pendingEmpty = null
     const d = p.interactor.direction
-    const moved = d ? Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(p.dir0.normalize())))) / DEG : 0
-    if (getTime() - p.t0 < this.tapMaxSeconds && moved < this.dragStartDeg) this._onTapEmpty.invoke()
+    if (isTap(getTime() - p.t0, d ? rayMoveCm(p.dir0, d) : 0)) this._onTapEmpty.invoke()
   }
 
   private firePull(m: Marker, interactor: Interactor): void {

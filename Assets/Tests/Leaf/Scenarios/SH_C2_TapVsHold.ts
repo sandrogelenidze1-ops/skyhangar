@@ -1,6 +1,6 @@
 // Criterion 2/3 boundary: tap-vs-pull discrimination with real SIK input timing.
-// Lens rule (SkyHangarSkyController.tapMaxSeconds = 0.3): release in < 0.3 s = tap (card),
-// held >= 0.3 s = pull (model comes to the hand).
+// Lens rule (SkyHangarInput: TAP_MAX_SECONDS = 0.15, TAP_MAX_MOVE_CM = 1): release in < 0.15 s with < 1 cm of
+// hand movement = tap (card); anything longer or further = drag / hold (pull, model comes to the hand).
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {sleep} from "Leaf.lspkg/Utils/common/Utils"
 import {Checks, getMain, waitReady, waitUntil, SkyHangarLeafInteractor, requireInteractable} from "../SkyHangarTestKit"
@@ -13,11 +13,14 @@ export class SH_C2_TapVsHold extends Scenario {
     await waitReady(main, c)
     const it = new SkyHangarLeafInteractor()
 
-    // 120 ms pinch -> tap.
-    await it.pinchFor(requireInteractable("SkyMarker_DL31"), 120)
+    // 60 ms pinches -> taps (tap 1 pins the vehicle, tap 2 opens its card).
+    await it.pinchFor(requireInteractable("SkyMarker_DL31"), 60)
+    await sleep(300)
+    c.check("first 60 ms pinch is a tap (no pull)", "real input", main.getHeldState() === "none" && !main.isCardVisible(), `state=${main.getHeldState()}`)
+    await it.pinchFor(requireInteractable("SkyMarker_DL31"), 60)
     await waitUntil(() => main.isCardVisible(), 1000)
-    c.check("120 ms pinch opens the card", "real input", main.isCardVisible() && main.getCardFlightId() === "DL31", `card="${main.getCardFlightId()}"`)
-    c.check("120 ms pinch does not pull", "real input", main.getHeldState() === "none", `state=${main.getHeldState()}`)
+    c.check("60 ms pinch opens the card", "real input", main.isCardVisible() && main.getCardFlightId() === "DL31", `card="${main.getCardFlightId()}"`)
+    c.check("60 ms pinch does not pull", "real input", main.getHeldState() === "none", `state=${main.getHeldState()}`)
     main.closeCard()
     await sleep(400)
 

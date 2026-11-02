@@ -17,6 +17,7 @@ import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, yawOf, yawOffset, yawRotation, DEG} from "./SkyHangarUtil"
+import {HoverHold, isTap} from "./SkyHangarInput"
 
 // The glass rail sits RAIL_Y above the stand origin: just under the vehicles and ~1.5 cm above the top of the fixed info labels
 // (label centre is 1.5 cm below the origin, about 7.3 cm tall).
@@ -38,9 +39,6 @@ export interface ShelfTap {
   fromWorld: vec3
 }
 
-/** A pinch released within this time and movement is a tap, not a drag. */
-const TAP_MAX_SECONDS = 0.15
-const TAP_MAX_MOVE_CM = 1
 
 export interface ShelfEntry {
   info: SkyObjectInfo
@@ -114,6 +112,9 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   private drag: {it: Interactor; dir0: vec3; t0: number; stand: Stand | null; dist: number} | null = null
   private hiddenId = ""
   private hover = -1
+  /** Raw slot under the ray (-1 = none); `hover` is this held for 0.3 s after the ray leaves so the glow does not flicker. */
+  private rawHover = -1
+  private hoverHold = new HoverHold<number>()
   private _onInspect = new Event<InspectRequest>()
   get onInspect(): PublicApi<InspectRequest> { return this._onInspect.publicApi() }
   private _onTap = new Event<ShelfTap>()
@@ -310,11 +311,11 @@ export class SkyHangarShelfController extends BaseScriptComponent {
       const d = e.interactor.direction
       const o = e.interactor.startPoint
       const st = d && o ? this.standUnderRay(o, d.normalize()) : null
-      this.hover = st ? this.stands.indexOf(st) : -1
+      this.rawHover = st ? this.stands.indexOf(st) : -1
     }
     it.onHoverEnter.add(hoverAt)
     it.onHoverUpdate.add(hoverAt)
-    it.onHoverExit.add(() => (this.hover = -1))
+    it.onHoverExit.add(() => (this.rawHover = -1))
     it.onTriggerStart.add((e: InteractorEvent) => {
       hoverAt(e)
       const d = e.interactor.direction
@@ -351,6 +352,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   }
 
   private update(): void {
+    this.hover = this.hoverHold.update(this.rawHover >= 0 ? this.rawHover : null, getTime()) ?? -1
     if (this.drag && this.drag.stand && this.drag.it.isTriggering && getTime() - this.drag.t0 >= 0.3) {
       // Held still on a model: pull it into the hand (sideways movement would have been a page swipe instead).
       const it = this.drag.it
@@ -373,7 +375,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
         const drag = this.drag
         this.drag = null
         const moveCm = d ? d.normalize().sub(drag.dir0.normalize()).length * drag.dist : 0
-        if (getTime() - drag.t0 < TAP_MAX_SECONDS && moveCm < TAP_MAX_MOVE_CM) {
+        if (isTap(getTime() - drag.t0, moveCm)) {
           const st = drag.stand
           const shown = !!st && !!st.entry && !!st.model && !isNull(st.model.root)
           this._onTap.invoke({info: shown ? st!.entry!.info : null, fromWorld: shown ? st!.model!.root.getTransform().getWorldPosition() : this.getShelfWorldPos()})
