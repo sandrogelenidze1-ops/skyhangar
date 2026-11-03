@@ -151,7 +151,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     this.layoutBlips()
   }
 
-  /** Glass style (round 1 #14): pale cool glass face with a bright rim, thin rings, soft sweep, glyph blips. */
+  /** Frosted-glass style: neutral frosted face with a white rim, thin white rings, soft sweep, glyph blips. */
   private build(): void {
     const kit = this.sky.partKit
     if (!kit) return
@@ -160,12 +160,12 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     // Discs from a 96-segment lathe (the shared cylinder is coarse): the face and its glow are round, not faceted.
     const disc = latheMesh("radar_disc", [[-0.5, 1, 0], [0.5, 1, 0]], RING_MIN_SEGMENTS)
     const flat = quat.angleAxis(Math.PI / 2, vec3.right()) // the lathe axis is Z; lay it down so its axis is up
-    kit.part(this.discRoot, "RadarFace", disc, kit.uniqueUnlit(new vec4(0.62, 0.74, 0.88, 0.22)), new vec3(0, -0.4, 0), new vec3(R * 2, R * 2, 0.3), flat)
-    kit.part(this.discRoot, "RadarFaceGlow", disc, kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.1)), new vec3(0, -0.2, 0), new vec3(R * 1.2, R * 1.2, 0.1), flat)
-    this.buildRing(kit.uniqueUnlit(new vec4(0.9, 0.95, 1.0, 0.85)), R, 0.22)
-    const ringMat = kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.45))
+    kit.part(this.discRoot, "RadarFace", disc, kit.uniqueUnlit(new vec4(0.82, 0.85, 0.9, 0.22)), new vec3(0, -0.4, 0), new vec3(R * 2, R * 2, 0.3), flat)
+    kit.part(this.discRoot, "RadarFaceGlow", disc, kit.uniqueUnlit(new vec4(1, 1, 1, 0.08)), new vec3(0, -0.2, 0), new vec3(R * 1.2, R * 1.2, 0.1), flat)
+    this.buildRing(kit.uniqueUnlit(new vec4(1, 1, 1, 0.7)), R, 0.22)
+    const ringMat = kit.uniqueUnlit(new vec4(1, 1, 1, 0.4))
     for (const frac of [1 / 3, 2 / 3]) this.buildRing(ringMat, R * frac, 0.1)
-    const cross = kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.18))
+    const cross = kit.uniqueUnlit(new vec4(1, 1, 1, 0.16))
     kit.part(this.discRoot, "CrossNS", kit.box, cross, new vec3(0, 0.05, 0), new vec3(0.08, 0.06, R * 2))
     kit.part(this.discRoot, "CrossEW", kit.box, cross, new vec3(0, 0.05, 0), new vec3(R * 2, 0.06, 0.08))
     // Heading-up marker at the top of the rim (accent)

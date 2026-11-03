@@ -11,7 +11,7 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/ElementContent"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
-import {applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, GLASS_READABLE, roleSize, rowHeight, PALETTE, SPACE, TEXT, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
+import {applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, glassSurface, GLASS, makeFlex, obj, GLASS_READABLE, roleSize, rowHeight, PALETTE, SPACE, TEXT, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
 
 const ICON_SKY = requireAsset("../Icons/cloud.png") as Texture
 const ICON_RADAR = requireAsset("../Icons/radar.png") as Texture
@@ -21,6 +21,7 @@ const ICON_ROUTES = requireAsset("../Icons/routes_128x128 2.png") as Texture
 const HINT_STEPS = ["Look up to find aircraft", "Aim and pinch to pin it", "Pinch and drag to the Hangar"]
 const HINT_STEP_SECONDS = 2.5
 const DOUBLE_TAP_SECONDS = 0.8
+const GLYPH_MIN_OPACITY = 0.9
 const TIP_SECONDS = 1.5 // "All routes" label
 const TIP_FADE_IN_S = 0.2
 const TIP_FADE_OUT_S = 0.3
@@ -198,7 +199,8 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
         this.modeDirty = true
       }
       if (this.accents[i]) this.accents[i].getSceneObject().getTransform().setLocalScale(on ? vec3.one() : vec3.zero())
-      if (this.labelTexts[i]) this.labelTexts[i].textFill.color = TEXT.primary
+      if (this.labelTexts[i]) this.labelTexts[i].textFill.color = TEXT.primary // the label sits on the frosted bar below the disc, so it stays white
+      if (this.contents[i]) this.tintIcon(this.contents[i], on)
     }
     if (this.toggleRoot) this.toggleRoot.getTransform().setLocalScale(mode === "sky" ? vec3.one() : vec3.zero())
     if (mode !== "sky") this.dismissHint()
@@ -221,8 +223,8 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     this.toggleExtraCm = gap + d
     const root = obj(panel, "AllRoutesToggle", new vec3(0, pillH / 2 + gap + d / 2, 0))
     this.toggleRoot = root
-    glassPanel(root, "AllRoutesGlass", new vec2(d, d), {tint: new vec4(0.5, 0.64, 0.86, 0.55), glow: new vec4(0.8, 0.9, 1, 0.1), edge: PALETTE.glassEdge, edgeCm: 0.12, radiusCm: d})
-    const acc = glassPanel(root, "AllRoutesActive", new vec2(d, d), {tint: new vec4(1, 1, 1, 1), glow: new vec4(1, 1, 1, 0), edge: new vec4(1, 1, 1, 1), edgeCm: 0.12, radiusCm: d})
+    const disc = glassSurface(root, "AllRoutesGlass", new vec2(d, d), {radiusCm: d, fill: 0.67, rim: 0.7})
+    const acc = glassSurface(root, "AllRoutesActive", new vec2(d, d), {radiusCm: d, solid: true, rim: 0})
     acc.so.getTransform().setLocalPosition(new vec3(0, 0, 0.04))
     acc.so.getTransform().setLocalScale(vec3.zero())
     this.toggleActive = acc.so
@@ -255,8 +257,8 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
       this.applyTip()
       tip.getTransform().setLocalScale(vec3.one())
     })
-    btn.onHoverEnter.add(() => this.hovered++)
-    btn.onHoverExit.add(() => (this.hovered = Math.max(0, this.hovered - 1)))
+    btn.onHoverEnter.add(() => { this.hovered++; disc.setHover(true) })
+    btn.onHoverExit.add(() => { this.hovered = Math.max(0, this.hovered - 1); disc.setHover(false) })
     this.toggleBtn = btn
   }
 
@@ -279,18 +281,20 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     hint.getTransform().setLocalScale(vec3.zero())
   }
 
-  /** White icon normally; dark blue on the white filled (active) circle. */
-  private tintToggleIcon(on: boolean): void {
-    if (!this.toggleContent) return
-    const ecAny = this.toggleContent as any
+  /** White icon normally; dark slate on the solid white (active) disc. */
+  private tintIcon(ec: ElementContent, on: boolean): void {
+    const ecAny = ec as any
     ecAny._useThemeColors = false
-    const c = on ? new vec4(0.06, 0.15, 0.4, 1) : new vec4(1, 1, 1, 0.85)
+    const c = on ? GLASS.slate : new vec4(1, 1, 1, 0.85)
     const h = on ? c : new vec4(1, 1, 1, 1)
     ecAny._defaultIconTint = c
     ecAny._hoveredIconTint = h
     ecAny._triggeredIconTint = h
     ecAny._inactiveIconTint = c
-    this.toggleContent.markColorsDirty()
+    ec.markColorsDirty()
+  }
+  private tintToggleIcon(on: boolean): void {
+    if (this.toggleContent) this.tintIcon(this.toggleContent, on)
   }
 
   /** Cluster of three round glass buttons (round 2 #7): active = accent blue, the rest pale frosted gray. */
@@ -306,7 +310,7 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     const pillW = 3 * B + 2 * SPACE.l * k + 2 * SPACE.l * k
     const pillH = colH + 2 * SPACE.s * k
     this.menuHeightCm = pillH
-    glassPanel(panel, "MenuBarGlass", new vec2(pillW, pillH), {radiusCm: Math.min(pillW, pillH) / 2, tint: GLASS_READABLE})
+    glassSurface(panel, "MenuBarGlass", new vec2(pillW, pillH), {radiusCm: Math.min(pillW, pillH) / 2})
     const content = obj(panel, "Content", new vec3(0, 0, 0.6))
     const row = makeFlex(content, "Row", FlexDirection.Row, pillW, pillH, {gap: SPACE.l * k, justify: FlexJustify.Center, align: FlexAlign.Center})
     const icons = [ICON_SKY, ICON_RADAR, ICON_HANGAR]
@@ -317,11 +321,10 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
       addFlexChild(col.so, row.flex, B, colH)
       const holder = obj(col.so, "MenuButtonHolder_" + names[i], new vec3(0, 0, 0.02))
       addFlexChild(holder, col.flex, B, B)
-      // Accent disc behind the active button (calm accent blue)
-      // Light glass circle under every button (inactive look), brighter than the pill behind it
-      glassPanel(holder, "MenuDisc_" + names[i], new vec2(B, B), {tint: new vec4(0.5, 0.64, 0.86, 0.55), glow: new vec4(0.8, 0.9, 1, 0.1), edge: PALETTE.glassEdge, edgeCm: 0.12, radiusCm: B})
-      // Solid bright accent fill for the active button
-      const acc = glassPanel(holder, "MenuActive_" + names[i], new vec2(B * 1.04, B * 1.04), {tint: new vec4(0.3, 0.62, 1.0, 0.96), glow: new vec4(0.7, 0.88, 1, 0.35), edge: new vec4(1, 1, 1, 0.95), edgeCm: 0.16, radiusCm: B})
+      // Quiet frosted disc under every button (inactive look): white ~14% fill, thin rim
+      const disc = glassSurface(holder, "MenuDisc_" + names[i], new vec2(B, B), {radiusCm: B, fill: 0.67, rim: 0.7})
+      // Solid white disc for the active button
+      const acc = glassSurface(holder, "MenuActive_" + names[i], new vec2(B * 1.04, B * 1.04), {radiusCm: B, solid: true, rim: 0})
       acc.so.getTransform().setLocalPosition(new vec3(0, 0, 0.04))
       acc.so.getTransform().setLocalScale(vec3.zero())
       this.accents.push(acc.rect)
@@ -352,8 +355,8 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
           if (now - this.lastSkyTap < DOUBLE_TAP_SECONDS) { this.lastSkyTap = -10; this.showHint() } else this.lastSkyTap = now
         })
       }
-      btn.onHoverEnter.add(() => this.hovered++)
-      btn.onHoverExit.add(() => (this.hovered = Math.max(0, this.hovered - 1)))
+      btn.onHoverEnter.add(() => { this.hovered++; disc.setHover(true) })
+      btn.onHoverExit.add(() => { this.hovered = Math.max(0, this.hovered - 1); disc.setHover(false) })
       this.buttons.push(btn)
       this.contents.push(ec)
       this.labelTexts.push(addTextRow(col.so, col.flex, "MenuLabel_" + names[i], this.labels[i] ?? names[i], "HeadlineXL", B * 1.4, labelH, TEXT.primary, D))
@@ -427,9 +430,9 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     if (this.frames > 3 && Math.abs(op - this.lastOpacity) > 0.01) {
       this.lastOpacity = op
       for (const btn of this.buttons) btn.opacity = op
-      for (const c of this.contents) c.opacity = op
+      for (const c of this.contents) c.opacity = Math.max(op, GLYPH_MIN_OPACITY) // glyphs stay legible while the bar is dim
       if (this.toggleBtn) this.toggleBtn.opacity = op
-      if (this.toggleContent) this.toggleContent.opacity = op
+      if (this.toggleContent) this.toggleContent.opacity = Math.max(op, GLYPH_MIN_OPACITY)
     }
   }
 }

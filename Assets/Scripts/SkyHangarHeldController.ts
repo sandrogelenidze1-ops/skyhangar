@@ -20,7 +20,7 @@ import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
-import {glassPanel, obj, PALETTE, setRenderOrderTree, UI_RENDER_ORDER} from "./SkyHangarSharedUI"
+import {glassPanel, glassSurface, obj, PALETTE, setRenderOrderTree, UI_RENDER_ORDER} from "./SkyHangarSharedUI"
 import {
   PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
 } from "./SkyHangarUtil"
@@ -406,7 +406,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private buildPad(name: string, color: vec4, icon: Texture): Pad {
     const root = makeObj(this.sceneObject, name)
     const d = this.padDiameterCm
-    glassPanel(root, "PadGlass", new vec2(d, d), {tint: new vec4(0.5, 0.64, 0.86, 0.55), glow: new vec4(0.8, 0.9, 1, 0.1), edge: PALETTE.glassEdge, edgeCm: 0.15, radiusCm: d})
+    glassSurface(root, "PadGlass", new vec2(d, d), {radiusCm: d, fill: 0.67, rim: 0.7})
     const acc = glassPanel(root, "PadActive", new vec2(d * 1.04, d * 1.04), {tint: new vec4(0.3, 0.62, 1.0, 0.96), glow: new vec4(0.7, 0.88, 1, 0.35), edge: new vec4(1, 1, 1, 0.95), edgeCm: 0.2, radiusCm: d})
     acc.so.getTransform().setLocalPosition(new vec3(0, 0, 0.04))
     acc.so.getTransform().setLocalScale(vec3.zero())

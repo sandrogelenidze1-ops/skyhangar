@@ -21,7 +21,7 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {MapTrack, RouteMap} from "./SkyHangarRouteMap"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, styleGlass,
+  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassSurface, GLASS, makeFlex, obj, roleSize, rowHeight,
   FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
@@ -162,6 +162,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
 
   private panelRoot!: SceneObject
   private glass!: RoundedRectangle
+  private glassSurf!: ReturnType<typeof glassSurface>
   private rows: {[k: string]: Text} = {}
   private content: CardContent | null = null
   private visible = false
@@ -268,7 +269,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   setSolidBacking(on: boolean): void {
     if (on === this.solidBacking || !this.glass) return
     this.solidBacking = on
-    styleGlass(this.glass, this.glass.size, {tint: new vec4(CARD_TINT.x, CARD_TINT.y, CARD_TINT.z, on ? 0.9 : CARD_TINT.w), glow: CARD_GLOW, edgeCm: 0.14, radiusCm: RADIUS.l * (this.readDistanceCm / 110)})
+    this.glassSurf.setBacking(on)
   }
 
   /** Route tab map: fit to the track, draw coastline + route, and put the dot where the vehicle is now. */
@@ -295,11 +296,12 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     this.panelRoot = obj(this.sceneObject, "InfoCardPanel")
     this.panelRoot.getTransform().setLocalRotation(quat.angleAxis(-this.tiltDeg * (Math.PI / 180), vec3.up()).multiply(quat.angleAxis(-this.tiltDeg * 0.5 * (Math.PI / 180), vec3.right())))
     // Mid-blue frosted glass (deep enough for white type on an additive display) with a thin bright edge.
-    const g = glassPanel(this.panelRoot, "InfoCardGlass", new vec2(W, 30), {radiusCm: RADIUS.l * k, tint: CARD_TINT, glow: CARD_GLOW, edgeCm: 0.14})
+    const g = glassSurface(this.panelRoot, "InfoCardGlass", new vec2(W, 30), {radiusCm: 0.14 * W})
+    this.glassSurf = g
     this.glass = g.rect
     const content = obj(this.panelRoot, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, W, -1, {gap: SPACE.m * k, padY: pad, padX: pad, justify: FlexJustify.Start, align: FlexAlign.Center})
-    col.flex.onLayoutComplete.add((r) => (this.glass.size = new vec2(r.containerWidth, r.containerHeight)))
+    col.flex.onLayoutComplete.add((r) => this.glassSurf.resize(new vec2(r.containerWidth, r.containerHeight)))
     const L = HorizontalAlignment.Left
     const R = HorizontalAlignment.Right
 
@@ -360,7 +362,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     addFlexChild(bottom.so, col.flex, inner, btnH + 0.6)
     const pillW = 17.5 * k
     const pill = obj(bottom.so, "TabPill", new vec3(0, 0, 0.02))
-    glassPanel(pill, "TabPillGlass", new vec2(pillW, btnH + 0.5), {radiusCm: (btnH + 0.5) / 2, tint: new vec4(0.08, 0.16, 0.4, 0.55), glow: new vec4(1, 1, 1, 0), edge: PALETTE.glassEdge, edgeCm: 0.1})
+    glassSurface(pill, "TabPillGlass", new vec2(pillW, btnH + 0.5), {radiusCm: (btnH + 0.5) / 2, fill: 0.67, rim: 0.7})
     const pillRow = makeFlex(pill, "PillRow", FlexDirection.Row, pillW, btnH, {gap: 0.3 * k, justify: FlexJustify.Center, align: FlexAlign.Center})
     pillRow.so.getTransform().setLocalPosition(new vec3(0, 0, 0.3))
     addFlexChild(pill, bottom.flex, pillW, btnH + 0.5)
@@ -368,7 +370,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     const mkTab = (name: string, label: string, onTap: () => void) => {
       const holder = obj(pillRow.so, name + "Holder", new vec3(0, 0, 0.02))
       addFlexChild(holder, pillRow.flex, tabW, btnH)
-      const fill = glassPanel(holder, name + "Fill", new vec2(tabW, btnH), {tint: new vec4(1, 1, 1, 0.97), glow: new vec4(1, 1, 1, 0), edge: new vec4(1, 1, 1, 1), edgeCm: 0.1, radiusCm: btnH / 2})
+      const fill = glassSurface(holder, name + "Fill", new vec2(tabW, btnH), {radiusCm: btnH / 2, solid: true, rim: 0})
       fill.so.getTransform().setLocalPosition(new vec3(0, 0, 0.02))
       const btn = this.makeButton(holder, null, name, label, null, tabW, btnH, D, "Capsule", onTap, "tab")
       return {btn, fill: fill.so, ec: btn.sceneObject.getComponent(ElementContent.getTypeName()) as ElementContent}
@@ -392,7 +394,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     for (const [i, key, label] of [[0, "alt", "ALTITUDE"], [1, "spd", "GROUND SPEED"]] as [number, string, string][]) {
       const x = (i === 0 ? -1 : 1) * (tileW / 2 + gap / 2)
       const tile = obj(this.infoPane, key === "alt" ? "AltitudeTile" : "SpeedTile", new vec3(x, yTiles, 0.02))
-      glassPanel(tile, "StatTileGlass", new vec2(tileW, tileH), {tint: TILE_TINT, glow: new vec4(0.7, 0.85, 1, 0.1), edge: PALETTE.glassEdge, edgeCm: 0.08, radiusCm: RADIUS.m * k})
+      glassSurface(tile, "StatTileGlass", new vec2(tileW, tileH), {radiusCm: RADIUS.m * k, fill: 0.55, rim: 0.5, glow: false}) // inner tile: about 12% fill
       const c = makeFlex(tile, key === "alt" ? "Altitude" : "GroundSpeed", FlexDirection.Column, tileW, tileH, {justify: FlexJustify.Center, align: FlexAlign.Center})
       c.so.getTransform().setLocalPosition(new vec3(0, 0, 0.3))
       addTextRow(c.so, c.flex, key === "alt" ? "AltitudeLabel" : "SpeedLabel", label, "Label", tileW - 1, rowHeight("Label", D), TEXT.secondary, D)
@@ -417,7 +419,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     this.routeW = w
     this.routeH = h
     this.routePane = obj(area, "RoutePane", new vec3(0, 0, 0.02))
-    glassPanel(this.routePane, "RouteDiagramGlass", new vec2(w, h), {tint: TILE_TINT, glow: new vec4(0.6, 0.75, 1, 0.1), radiusCm: RADIUS.m * k, edgeCm: 0.08})
+    glassSurface(this.routePane, "RouteDiagramGlass", new vec2(w, h), {radiusCm: RADIUS.m * k, fill: 0.55, rim: 0.5, glow: false})
     this.map = new RouteMap(this.routePane, this.mapMaterial, w, h, D)
   }
 
@@ -426,7 +428,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     const k = D / 110
     const h = rowHeight("Label", D) + 0.3
     const holder = obj(parent, name, new vec3(0, 0, 0.02))
-    glassPanel(holder, name + "Glass", new vec2(w * 0.95, h), {radiusCm: h / 2, tint: new vec4(0.07, 0.16, 0.42, 0.75), glow: new vec4(0.6, 0.75, 1, 0.08), edge: PALETTE.glassEdge, edgeCm: 0.07})
+    glassSurface(holder, name + "Glass", new vec2(w * 0.95, h), {radiusCm: h / 2, fill: 0.67, rim: 0.7, glow: false})
     const so = obj(holder, name + "Text", new vec3(0, 0, 0.2))
     const t = so.createComponent("Component.Text") as Text
     t.text = text
@@ -451,9 +453,9 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   private makeButton(parent: SceneObject, flex: FlexLayout | null, name: string, label: string, icon: Texture | null, w: number, h: number, D: number, shape: string, onTap: () => void, look: "tab" | "secondary" | "close"): Button {
     const holder = look === "tab" ? parent : obj(parent, name + "Holder", new vec3(0, 0, 0.02))
     if (look === "secondary") {
-      glassPanel(holder, name + "Glass", new vec2(w, h), {tint: new vec4(0.08, 0.16, 0.4, 0.55), glow: new vec4(1, 1, 1, 0), edge: PALETTE.glassEdge, edgeCm: 0.1, radiusCm: h / 2})
+      glassSurface(holder, name + "Glass", new vec2(w, h), {radiusCm: h / 2, fill: 0.67, rim: 0.7})
     } else if (look === "close") {
-      glassPanel(holder, name + "Glass", new vec2(w, h), {tint: new vec4(0.3, 0.5, 0.95, 0.65), glow: new vec4(0.8, 0.9, 1, 0.15), edge: PALETTE.glassEdge, edgeCm: 0.12, radiusCm: w / 2})
+      glassSurface(holder, name + "Glass", new vec2(w, h), {radiusCm: w / 2, fill: 0.67, rim: 0.7})
     }
     const so = obj(holder, name, new vec3(0, 0, 0.1))
     const btn = so.createComponent(Button.getTypeName()) as Button

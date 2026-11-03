@@ -12,7 +12,7 @@ import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/E
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  GLASS_READABLE, PALETTE, applyFontToContent, RADIUS, SPACE, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
+  GLASS, glassSurface, PALETTE, applyFontToContent, RADIUS, SPACE, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
 interface Tag {
@@ -64,7 +64,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     this.titleRoot = root
     const w = 34 * k
     const h = rowHeight("Headline", D) + SPACE.m * k * 2
-    glassPanel(root, "ShelfTitleGlass", new vec2(w, h), {radiusCm: h / 2, tint: GLASS_READABLE})
+    glassSurface(root, "ShelfTitleGlass", new vec2(w, h), {radiusCm: h / 2})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, w, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     this.title = addTextRow(col.so, col.flex, "TitleText", "My Hangar · 12 models", "Headline", w - 2, rowHeight("Headline", D), PALETTE.text, D)
@@ -180,7 +180,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const root = obj(this.sceneObject, "NameTag", vec3.zero())
     root.getTransform().setLocalRotation(quat.angleAxis(-0.2, vec3.right()))
     const h = rowHeight("Headline", D) + rowHeight("Body", D) + rowHeight("Label", D) * 2 + SPACE.m * k
-    glassPanel(root, "NameTagGlass", new vec2(W, h), {radiusCm: RADIUS.m * k, tint: new vec4(0.04, 0.09, 0.22, 0.92), glow: new vec4(0.6, 0.78, 1, 0.06)})
+    glassSurface(root, "NameTagGlass", new vec2(W, h), {radiusCm: 0.2 * Math.min(W, h)})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, W, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     const inner = W - 1.0
@@ -201,7 +201,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const root = obj(this.sceneObject, "GroupHeader", vec3.zero())
     const h = rowHeight("Label", D) + SPACE.s * k
     const w = 9 * k
-    glassPanel(root, "GroupHeaderGlass", new vec2(w, h), {radiusCm: h / 2, tint: GLASS_READABLE})
+    glassSurface(root, "GroupHeaderGlass", new vec2(w, h), {radiusCm: h / 2})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, w, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     const text = addTextRow(col.so, col.flex, "GroupHeaderText", "Planes", "Label", w - 1, rowHeight("Label", D), PALETTE.text, D)
@@ -215,7 +215,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const root = obj(this.sceneObject, "ShelfPagingControls", pos)
     const h = 3.6 * k
     const w = 50 * k
-    glassPanel(root, "PagingGlass", new vec2(w, h + SPACE.s * k * 2), {radiusCm: (h + SPACE.s * k * 2) / 2, tint: GLASS_READABLE})
+    glassSurface(root, "PagingGlass", new vec2(w, h + SPACE.s * k * 2), {radiusCm: (h + SPACE.s * k * 2) / 2})
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const row = makeFlex(content, "Row", FlexDirection.Row, w, h + SPACE.s * k * 2, {gap: SPACE.m * k, justify: FlexJustify.Center, align: FlexAlign.Center})
     this.makeButton(row.so, row.flex, "ShelfPrevButton", "‹", h, h, () => this._onPrev.invoke(), "Round")
@@ -228,10 +228,20 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   private makeButton(parent: SceneObject, flex: FlexLayout, name: string, label: string, w: number, h: number, onTap: () => void, shape: string): ElementContent {
     const so = obj(parent, name, new vec3(0, 0, 0.02))
     const btn = so.createComponent(Button.getTypeName()) as Button
-    btn.setVariant({theme: "SnapOS2", shape: shape, style: "PrimaryNeutral"})
+    btn.setVariant({theme: "SnapOS2", shape: shape, style: "Ghost"}) // transparent fill: the frosted disc below carries the look
     btn.size = new vec3(w, h, 1)
+    const glass = glassSurface(so, name + "Glass", new vec2(w, h), {radiusCm: h, fill: 0.67, rim: 0.7})
+    glass.so.getTransform().setLocalPosition(new vec3(0, 0, -0.05))
+    btn.onHoverEnter.add(() => glass.setHover(true))
+    btn.onHoverExit.add(() => glass.setHover(false))
     const ec = so.createComponent(ElementContent.getTypeName()) as ElementContent
     applyFontToContent(ec)
+    const ecAny = ec as any
+    ecAny._useThemeColors = false
+    const white = new vec4(1, 1, 1, 1)
+    ecAny._defaultTextColor = white
+    ecAny._hoveredTextColor = white
+    ecAny._triggeredTextColor = white
     ec.text = label
     ec.textSize = roleSize(label.length <= 1 ? "Headline" : "Button", this.readDistanceCm)
     btn.onTriggerUp.add(() => onTap())

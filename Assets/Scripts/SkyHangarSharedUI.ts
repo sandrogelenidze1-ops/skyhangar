@@ -11,7 +11,7 @@ import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import {FlexItem} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexItem"
 import {FlexAlign, FlexAlignSelf, FlexDirection, FlexJustify} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexTypes"
-import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
+import {RoundedRectangle, RoundedRectBlendMode} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
 
 // ── Palette (round 1 "Colors" + round 2 #9). Never pure black panels.
 export const PALETTE = {
@@ -190,6 +190,137 @@ export function styleGlass(rect: RoundedRectangle, size: vec2, opts?: {tint?: ve
   rect.borderColor = opts?.edge ?? PALETTE.glassEdge
 }
 
+// ── Frosted glass (visionOS look). A real backdrop blur is impossible, so it is faked in layers: a baked fill texture
+// (white 16% at the bottom to 26% at the top over a faint 8% grey tint, ~6% fine noise, a very soft low-frequency tonal
+// variation), a gradient rim light (brightest on the top edge) and a faint outer glow. Textures are built once per fill
+// strength and cached; nothing is recomputed per frame.
+export const GLASS = {
+  slate: new vec4(0.13, 0.17, 0.24, 1), // glyph + label colour on a solid white (active) disc
+  solidWhite: new vec4(1, 1, 1, 0.9),
+  fillBottom: 0.16,
+  fillTop: 0.26,
+  tint: 0.08,
+  noise: 0.06,
+  rimCm: 0.1, // ~1.5 px
+  glowCm: 0.1, // ~1 px
+  divider: new vec4(1, 1, 1, 0.25),
+}
+const GLASS_BACKING = -1
+const glassTextures = new Map<string, Texture>()
+/**
+ * Fill texture: vertical 16-26% white gradient (x fill) over the faint grey tint, ~6% fine noise and a very soft
+ * low-frequency tonal drift. Baked once per fill strength at startup and cached.
+ */
+function glassTexture(fill: number): Texture {
+  const key = fill.toFixed(2)
+  const cached = glassTextures.get(key)
+  if (cached) return cached
+  const W = 128, H = 64
+  const data = new Uint8Array(W * H * 4)
+  let seed = 1234567
+  const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296)
+  for (let y = 0; y < H; y++) {
+    const top = y / (H - 1) // row 0 is the bottom of the texture
+    const base = (GLASS.fillBottom + (GLASS.fillTop - GLASS.fillBottom) * top) * fill
+    for (let x = 0; x < W; x++) {
+      const low = (Math.sin(x * 0.07 + y * 0.11) + Math.sin(x * 0.031 - y * 0.05 + 1.3)) * 0.02 // +-4% tonal drift
+      if (fill === GLASS_BACKING) {
+        // dense slate frost (about 80%) for the info card while the radar is up: nothing shows through the text
+        const a = Math.max(0, Math.min(1, (0.74 + 0.1 * top) * (1 + (rand() * 2 - 1) * GLASS.noise * 0.5 + low)))
+        const j = (y * W + x) * 4
+        data[j] = 36; data[j + 1] = 46; data[j + 2] = 66; data[j + 3] = Math.round(a * 255)
+        continue
+      }
+      const white = Math.max(0, Math.min(1, base * (1 + (rand() * 2 - 1) * GLASS.noise + low)))
+      const c = glassFillColor(white, fill)
+      const i = (y * W + x) * 4
+      data[i] = data[i + 1] = data[i + 2] = Math.round(c.x * 255)
+      data[i + 3] = Math.round(c.w * 255)
+    }
+  }
+  const tex = ProceduralTextureProvider.createWithFormat(W, H, TextureFormat.RGBA8Unorm)
+  ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, data)
+  glassTextures.set(key, tex)
+  return tex
+}
+
+/** White at `white` alpha over the faint grey tint, as one straight-alpha colour. */
+function glassFillColor(white: number, fill: number): vec4 {
+  const tint = GLASS.tint * Math.min(1, 0.5 + fill)
+  const a = white + tint * (1 - white)
+  const c = (white + 0.62 * tint * (1 - white)) / a
+  return new vec4(c, c, c, a)
+}
+
+/**
+ * The ONE frosted-glass builder. radiusCm: corner radius (clamped to fully round); fill: fill strength (1 = 16-26% white,
+ * 0.67 = the quiet 14% disc); rim: rim-light strength (0 = none); solid: a solid white (90%) disc/pill with no frost.
+ * Returns the rect (resize via rect.size) plus setHover() for the brighter hover fill.
+ */
+export function glassSurface(
+  parent: SceneObject,
+  name: string,
+  size: vec2,
+  opts: {radiusCm: number; fill?: number; rim?: number; solid?: boolean; glow?: boolean}
+): {so: SceneObject; rect: RoundedRectangle; setHover: (on: boolean) => void; resize: (size: vec2) => void; setBacking: (on: boolean) => void} {
+  const so = obj(parent, name)
+  const radius = Math.min(opts.radiusCm, Math.min(size.x, size.y) / 2)
+  const fill = opts.fill ?? 1
+  const rim = opts.rim ?? 1
+  let glowRect: RoundedRectangle | null = null
+  if (opts.glow !== false && !opts.solid) {
+    // faint 1 px outer glow: a slightly larger, very faint white shape behind the panel
+    const g = obj(so, name + "Glow", new vec3(0, 0, -0.02))
+    const gr = g.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+    gr.initialize()
+    gr.blendMode = RoundedRectBlendMode.Normal // premultiplied alpha; the default (Disabled) ignores alpha
+    gr.size = new vec2(size.x + GLASS.glowCm * 2, size.y + GLASS.glowCm * 2)
+    gr.cornerRadius = radius + GLASS.glowCm
+    gr.backgroundColor = new vec4(1, 1, 1, 0.07 * Math.min(1, rim))
+    glowRect = gr
+  }
+  const rect = so.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+  rect.initialize()
+  rect.blendMode = RoundedRectBlendMode.Normal
+  rect.size = size
+  rect.cornerRadius = radius
+  if (opts.solid) {
+    rect.backgroundColor = GLASS.solidWhite
+  } else {
+    rect.texture = glassTexture(fill)
+    rect.textureMode = "Stretch"
+    rect.useTexture = true
+  }
+  if (rim > 0) {
+    rect.border = true
+    rect.borderSize = GLASS.rimCm
+    rect.borderType = "Gradient"
+    rect.borderGradientType = "Linear"
+    rect.setBorderGradientPositions(new vec2(0, 1), new vec2(0, -1))
+    rect.setBorderGradient({
+      enabled: true,
+      type: "Linear",
+      start: new vec2(0, 1),
+      end: new vec2(0, -1),
+      stop0: {enabled: true, color: new vec4(1, 1, 1, Math.min(1, 0.95 * rim)), percent: 0},
+      stop1: {enabled: true, color: new vec4(1, 1, 1, 0.1 * rim), percent: 1}
+    })
+  }
+  const hot = opts.solid ? null : glassTexture(fill * 1.6)
+  const base = opts.solid ? null : glassTexture(fill)
+  const backing = opts.solid ? null : glassTexture(GLASS_BACKING)
+  return {
+    so,
+    rect,
+    setHover: (on: boolean) => { if (!opts.solid) rect.texture = on ? hot : base },
+    setBacking: (on: boolean) => { if (!opts.solid) rect.texture = on ? backing : base },
+    resize: (s: vec2) => {
+      rect.size = s
+      if (glowRect) glowRect.size = new vec2(s.x + GLASS.glowCm * 2, s.y + GLASS.glowCm * 2)
+    }
+  }
+}
+
 /** A FlexLayout container (column or row) on its own SceneObject. */
 export function makeFlex(
   parent: SceneObject,
@@ -275,9 +406,10 @@ export function addDivider(parent: SceneObject, parentFlex: FlexLayout, name: st
   const line = obj(so, name + "Line")
   const r = line.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
   r.initialize()
+  r.blendMode = RoundedRectBlendMode.Normal
   r.size = new vec2(width, 0.08)
   r.cornerRadius = 0.04
-  r.backgroundColor = PALETTE.divider
+  r.backgroundColor = GLASS.divider
   addFlexChild(so, parentFlex, width, 0.5)
 }
 
