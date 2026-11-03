@@ -24,7 +24,11 @@ import {HoverHold, isTap} from "./SkyHangarInput"
 const RAIL_Y = 4.0
 const STAND_FLOAT_CM = 7.7
 
-export type ShelfSort = "newest" | "airline"
+export type ShelfSort = "newest" | "type"
+
+/** Vehicle type groups in "Type" order, with their small header text. */
+const TYPE_ORDER = ["plane", "helicopter", "satellite"]
+const TYPE_HEADERS: {[k: string]: string} = {plane: "Planes", helicopter: "Helicopters", satellite: "Satellites"}
 
 /** A request to pull a shelf model into the hand. */
 export interface InspectRequest {
@@ -152,6 +156,11 @@ export class SkyHangarShelfController extends BaseScriptComponent {
     const sorted = this.sortedEntries()
     return sorted.slice(this.page * this.visibleSlots, this.page * this.visibleSlots + this.visibleSlots)
   }
+  /** Small group header for each visible stand: in Type order the first model of a group (and of a page) carries its type name; null elsewhere and in Recent order. */
+  getVisibleGroupHeaders(): (string | null)[] {
+    const vis = this.getVisibleEntries()
+    return vis.map((e, i) => (this.sort === "type" && (i === 0 || vis[i - 1].info.kind !== e.info.kind) ? TYPE_HEADERS[e.info.kind] ?? null : null))
+  }
   getVisibleIds(): string[] { return this.getVisibleEntries().map((e) => e.info.id) }
 
   nextPage(): boolean { return this.setPage(this.page + 1) }
@@ -164,13 +173,13 @@ export class SkyHangarShelfController extends BaseScriptComponent {
     return true
   }
   setSort(s: ShelfSort): void {
-    if (s !== "newest" && s !== "airline") return
+    if (s !== "newest" && s !== "type") return
     this.sort = s
     this.page = 0
     this.render()
   }
   toggleSort(): ShelfSort {
-    this.setSort(this.sort === "newest" ? "airline" : "newest")
+    this.setSort(this.sort === "newest" ? "type" : "newest")
     return this.sort
   }
 
@@ -267,7 +276,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
   private sortedEntries(): ShelfEntry[] {
     const list = this.entries.slice()
     if (this.sort === "newest") list.sort((a, b) => b.slot - a.slot)
-    else list.sort((a, b) => (a.info.airline < b.info.airline ? -1 : a.info.airline > b.info.airline ? 1 : b.slot - a.slot))
+    else list.sort((a, b) => TYPE_ORDER.indexOf(a.info.kind) - TYPE_ORDER.indexOf(b.info.kind) || b.slot - a.slot)
     return list
   }
 

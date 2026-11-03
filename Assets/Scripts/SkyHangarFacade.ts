@@ -7,7 +7,7 @@
 // comes from which style and which cells the UVs pick. Windows flicker by repainting just the two flicker columns of each style (a small rectangle).
 // Every colour is lifted to the time-of-day luminance floor and the horizon-step compensation is baked per atlas. All opaque, all procedural.
 
-import {minLuminance} from "./SkyHangarUtil"
+import {minLuminance, editorTone} from "./SkyHangarUtil"
 
 type RGB = [number, number, number]
 
@@ -75,7 +75,7 @@ export interface FacadeTime {
 export class FacadeAtlas {
   tex: Texture
   data = new Uint8Array(ATLAS_W * ATLAS_H * 4)
-  constructor(public comp: number) {
+  constructor() {
     this.tex = ProceduralTextureProvider.createWithFormat(ATLAS_W, ATLAS_H, TextureFormat.RGBA8Unorm)
   }
 }
@@ -183,32 +183,29 @@ function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: Facade
   }
 }
 
-/** Write one painted variant (current contents of `buf`) into an atlas data array at the cell (col, row), compensated for the dim step. */
-function writeCell(d: Uint8Array, col: number, row: number, wgt: number): void {
+/** Write one painted variant (current contents of `buf`) into an atlas data array at the cell (col, row), with the uniform editor tone. */
+function writeCell(d: Uint8Array, col: number, row: number): void {
   const ox = col * BAY_W, oy = row * BAY_H
   for (let y = 0; y < BAY_H; y++) {
     const r = oy + (BAY_H - 1 - y) // texture row 0 is the bottom of the image
     for (let x = 0; x < BAY_W; x++) {
       const s = (y * BAY_W + x) * 3
       const o = (r * ATLAS_W + ox + x) * 4
-      for (let k = 0; k < 3; k++) {
-        let c = buf[s + k]
-        if (wgt > 0) c += (Math.max(0, Math.min(1, (36 + 175 * c) / 202)) - c) * wgt
-        d[o + k] = Math.round(255 * Math.max(0, Math.min(1, c)))
-      }
+      const t = editorTone([buf[s], buf[s + 1], buf[s + 2]])
+      for (let k = 0; k < 3; k++) d[o + k] = Math.round(255 * t[k])
       d[o + 3] = 255
     }
   }
 }
 
-/** Repaint a whole atlas (every style, every variant): palette lifted to the floor, step compensation baked in. */
+/** Repaint a whole atlas (every style, every variant): palette lifted to the floor, editor tone baked in. */
 export function paintAtlas(a: FacadeAtlas, ft: FacadeTime): void {
   for (let si = 0; si < STYLES.length; si++) {
     const pal = makePalette(STYLES[si], ft, 1)
     const palShade = makePalette(STYLES[si], ft, 0.78)
     for (let vi = 0; vi < VARIANTS.length; vi++) {
       paintBay(VARIANTS[vi], vi, pal, palShade, ft)
-      writeCell(a.data, vi % ATLAS_COLS, si * ROWS_PER_STYLE + Math.floor(vi / ATLAS_COLS), a.comp)
+      writeCell(a.data, vi % ATLAS_COLS, si * ROWS_PER_STYLE + Math.floor(vi / ATLAS_COLS))
     }
   }
   ;(a.tex.control as ProceduralTextureProvider).setPixels(0, 0, ATLAS_W, ATLAS_H, a.data)
@@ -222,7 +219,7 @@ export function paintFlicker(a: FacadeAtlas, ft: FacadeTime, style: number): voi
   const row = style * ROWS_PER_STYLE
   for (let vi = 0; vi < 2; vi++) {
     paintBay(VARIANTS[vi], vi, pal, palShade, ft)
-    writeCell(a.data, vi, row, a.comp)
+    writeCell(a.data, vi, row)
   }
   for (let y = 0; y < BAY_H; y++) {
     const src = ((row * BAY_H + y) * ATLAS_W) * 4
@@ -245,7 +242,6 @@ export function propsAtlasTexture(floor: number): Texture {
   const d = new Uint8Array(W * H * 4)
   const lift = (c: number[]) => minLuminance(c, floor)
   const body = lift([0.9, 0.92, 0.93]), hi = lift([1, 1, 1]), slot = minLuminance([0.3, 0.33, 0.38], 0.3), edge = lift([0.7, 0.73, 0.78])
-  const comp = (x: number) => Math.max(0, Math.min(1, (36 + 175 * x) / 202)) // the roof is below the horizon step
   for (let cell = 0; cell < 3; cell++) {
     for (let y = 0; y < 32; y++) {
       for (let x = 0; x < 32; x++) {
@@ -261,7 +257,7 @@ export function propsAtlasTexture(floor: number): Texture {
           else if (r < 15) c = r < 14 ? slot : hi
         }
         const o = (y * W + cell * 32 + x) * 4
-        d[o] = Math.round(255 * comp(c[0])); d[o + 1] = Math.round(255 * comp(c[1])); d[o + 2] = Math.round(255 * comp(c[2])); d[o + 3] = 255
+        d[o] = Math.round(255 * c[0]); d[o + 1] = Math.round(255 * c[1]); d[o + 2] = Math.round(255 * c[2]); d[o + 3] = 255
       }
     }
   }

@@ -209,14 +209,15 @@ export function minLuminance(c: number[], floor: number): [number, number, numbe
 }
 
 /**
- * Compensation for the preview's dim step (editor only). Measured against the preview: a lens colour c (0..1) is shown as about 80 + 175 c
- * above the editor floor plane's far edge and as 44 + 202 c below it (fitted from sampling both sides, including with compensation on), so
- * the colour that looks the same below the edge is c' = (36 + 175 c) / 202. That reaches c' = 1 at STEP_MAX_C = 0.95, so practically every colour
- * can be matched. `weight` (0..1) eases the compensation in over the +-0.5 degree band at the edge.
+ * The one editor-only colour factor, applied uniformly to every authored backdrop colour (no elevation / camera-height dependence, no split).
+ * The preview shows a lens colour c (0..1) as about 80 + 175 c above the floor-plane edge and 44 + 202 c below it. The lower half is the reference
+ * look, so colours are authored as c' = (202 c - 36) / 175 (what the upper half needs to read like the lower half), after a saturation gain that
+ * removes the pastel haze. Callers lift the result to their luminance floor afterwards.
  */
-export const STEP_MAX_C = 0.949
-export function horizonStepCompensate(c: number[], weight: number = 1): [number, number, number] {
-  const f = (x: number) => x + (Math.max(0, Math.min(1, (36 + 175 * x) / 202)) - x) * weight
+export const EDITOR_SAT = 1.3
+export function editorTone(c: number[]): [number, number, number] {
+  const l = c[0] * 0.3 + c[1] * 0.4 + c[2] * 0.3
+  const f = (x: number) => Math.max(0, Math.min(1, (202 * Math.max(0, Math.min(1, l + (x - l) * EDITOR_SAT)) - 36) / 175))
   return [f(c[0]), f(c[1]), f(c[2])]
 }
 
@@ -225,5 +226,3 @@ export function largeSurfaceFloor(w: number[]): number {
   return 0.65 * w[0] + 0.55 * w[1] + 0.45 * w[2]
 }
 
-/** Elevation (degrees) of the editor floor plane's far edge, where the preview's dim step sits (about 1.7 degrees below the true horizon). */
-export const EDITOR_EDGE_DEG = -1.67

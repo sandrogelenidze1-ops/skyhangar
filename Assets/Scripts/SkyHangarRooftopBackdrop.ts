@@ -12,7 +12,7 @@
 // Expects @inputs: camera object, sky controller (primitive kit). Must not: interact or show UI.
 
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
-import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance, horizonStepCompensate, EDITOR_EDGE_DEG} from "./SkyHangarUtil"
+import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHangarUtil"
 import {MeshBatch} from "./SkyHangarBatch"
 import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
@@ -36,10 +36,6 @@ type RGB = [number, number, number]
 const BLOCK_TINT: RGB[] = [[1.0, 1.0, 1.0], [1.0, 0.86, 0.76], [0.62, 0.66, 0.96]]
 const GLASS: RGB[] = [[0.64, 0.76, 0.88], [0.74, 0.66, 0.84], [0.34, 0.45, 0.82]] // bright blue-grey glass reflecting the sky, never black
 const LIT_FRAC = [0, 0.55, 0.35] // fraction of windows lit: none by day, 55% at dusk, 35% at night
-// The preview dims everything below the editor floor's far edge. The city is cut into five horizontal bands around that edge, each using the atlas
-// painted with a different compensation weight (LEVELS), so the step eases over about 0.6 degrees. BAND_DEG are the band borders relative to the edge.
-const LEVELS = [1, 0.75, 0.5, 0.25, 0]
-const BAND_DEG = [-0.3, -0.1, 0.1, 0.3]
 const HORIZON: RGB[] = [[0.44, 0.69, 0.95], [1.0, 0.55, 0.24], [0.45, 0.08, 0.74]] // the sky script's horizon colours
 const AMB_LEVEL = [1.0, 0.85, 0.6]
 const AMB_TINT: RGB[] = [[1.0, 0.96, 0.88], [1.0, 0.72, 0.62], [0.42, 0.52, 1.0]]
@@ -146,11 +142,11 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     this.farRoot = makeObj(this.sceneObject, "FarLayer")
     const city = makeObj(this.farRoot, "City")
 
-    // five facade atlases (one per compensation level) and one merged batch per atlas
+    // one facade atlas and one merged batch (the editor tone is uniform, so there are no elevation bands)
     const atlasMats: Material[] = []
     const batches: MeshBatch[] = []
-    for (const lvl of LEVELS) {
-      const a = new FacadeAtlas(lvl)
+    for (let n = 0; n < 1; n++) {
+      const a = new FacadeAtlas()
       this.atlases.push(a)
       const m = opaqueTexMat(a.tex)
       m.mainPass.twoSided = true
@@ -215,26 +211,15 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     return ACCENT_STYLE
   }
 
-  /** Band (batch) index of an elevation in degrees: 0 = fully below the editor floor edge ... 4 = above it. */
-  private bandAt(elevDeg: number): number {
-    const e = elevDeg - EDITOR_EDGE_DEG
-    return e < BAND_DEG[0] ? 0 : e < BAND_DEG[1] ? 1 : e < BAND_DEG[2] ? 2 : e < BAND_DEG[3] ? 3 : 4
-  }
-
-  /** One building: a shaded body cut into bands at the editor edge, a facade grid with a window in every bay, and a rooftop; all appended to batches. */
+  /** One building: a shaded body, a facade grid with a window in every bay, and a rooftop; all appended to batches. */
   private addBuilding(batches: MeshBatch[], R: any, ri: number, a: number, d: number, w: number, top: number, style: number, rnd: () => number): void {
     const base = R.base
     const yaw = -a
     const cx = Math.sin(a) * d, cz = -Math.cos(a) * d
     const right = [Math.cos(a), 0, Math.sin(a)]
     const front = [-Math.sin(a), 0, Math.cos(a)]
-    const yb = BAND_DEG.map((b) => Math.tan((EDITOR_EDGE_DEG + b) * DEG) * d)
-    const bounds = [base, yb[0], yb[1], yb[2], yb[3], top + 1]
     const uvSh = variantUV(style, S_WALLSH), uvCap = variantUV(style, S_CAP), uvWall = variantUV(style, S_WALL)
-    for (let k = 0; k < 5; k++) {
-      const y0 = Math.max(bounds[k], base), y1 = Math.min(bounds[k + 1], top)
-      if (y1 - y0 > 0.5) batches[k].box(cx, (y0 + y1) / 2, cz, w, y1 - y0, 260, yaw, uvSh, uvCap)
-    }
+    if (top - base > 0.5) batches[0].box(cx, (base + top) / 2, cz, w, top - base, 260, yaw, uvSh, uvCap)
     // facade bays
     const bayW = d * Math.tan(R.bayDeg * DEG), bayH = bayW * 1.15
     const yBot = Math.max(base, Math.tan(-16 * DEG) * d) // nothing below the roof ledge's view is worth building
@@ -246,7 +231,6 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       const fc = [cx + front[0] * 136, 0, cz + front[2] * 136]
       for (let r = 0; r < rows; r++) {
         const yT = top - r * bayH, yB = yT - bayH
-        const lvl = this.bandAt(Math.atan2((yT + yB) / 2, d) / DEG)
         for (let c = 0; c < cols; c++) {
           let vi: number
           if (r === rows - 1 && baseVisible && R.shop) vi = V_SHOP + (rnd() < 0.5 ? 0 : 1)
@@ -259,7 +243,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
             vi = q < 0.07 ? V_AC + Math.floor(rnd() * 4) : q < 0.17 ? V_BALC + Math.floor(rnd() * 4) : V_WIN + Math.floor(rnd() * 12)
           }
           const x0 = (c - cols / 2) * bayW, x1 = x0 + bayW
-          batches[lvl].quad(
+          batches[0].quad(
             [fc[0] + right[0] * x0, yB, fc[2] + right[2] * x0], [fc[0] + right[0] * x1, yB, fc[2] + right[2] * x1],
             [fc[0] + right[0] * x1, yT, fc[2] + right[2] * x1], [fc[0] + right[0] * x0, yT, fc[2] + right[2] * x0],
             front[0], 0, front[2], variantUV(style, vi))
@@ -267,7 +251,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       }
     }
     // rooftop: every building gets a parapet cap and its own mix of setback, tank, antenna and AC boxes (the far ring a lighter set)
-    const rb = batches[this.bandAt(Math.atan2(top, d) / DEG)]
+    const rb = batches[0]
     const on = (y: number, xo: number): number[] => [cx + right[0] * xo, y, cz + right[2] * xo]
     const capH = bayH * 0.16
     const uvMetal = variantUV(style, S_METAL), uvTank = variantUV(style, S_TANK), uvAc = variantUV(style, S_AC)
@@ -496,7 +480,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     this.ft = this.facadeTime(w, getTime())
     for (const a of this.atlases) paintAtlas(a, this.ft)
     // roof: albedo * ambient plus a warm sunset rim on the lit edges at dusk, lifted so even the shaded faces stay above the big-surface floor
-    // (lit faces show roughly 0.75 of their albedo), then brightened by the dim step: everything on the roof is below the horizon
+    // (lit faces show roughly 0.75 of their albedo)
     const rim = w[1] * 0.3
     const litFloor = big / 0.62
     for (const r of this.roofMats) {
@@ -504,8 +488,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       const b = [r.c[0] * amb[0] + rim * r.rim + moon * 0.35, r.c[1] * amb[1] + rim * r.rim * 0.55 + moon * 0.6, r.c[2] * amb[2] + rim * r.rim * 0.2 + moon]
       // the slab fills the whole view when looking down and the grid still shows through anything under ~0.5 at night: it keeps the daytime floor
       const lc = minLuminance(b, r.m === this.slabMat ? 0.65 / 0.75 : litFloor)
-      const rc = horizonStepCompensate(lc) // applied once, to the final authored colour, and kept off white
-      r.m.mainPass.baseColor = new vec4(Math.min(0.92, rc[0]), Math.min(0.92, rc[1]), Math.min(0.92, rc[2]), 1)
+      r.m.mainPass.baseColor = new vec4(Math.min(0.92, lc[0]), Math.min(0.92, lc[1]), Math.min(0.92, lc[2]), 1) // the roof is the lower-half reference look: no factor
     }
   }
 

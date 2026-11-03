@@ -46,7 +46,8 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   private counter!: Text
   private dots!: Text
   private sortContent!: ElementContent
-  private sortLabel = "Newest"
+  private sortLabel = "Recent"
+  private headers: {root: SceneObject; text: Text; shown: string}[] = []
   private configured = false
   private _onPrev = new Event<void>()
   private _onNext = new Event<void>()
@@ -84,6 +85,28 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   getCounterText(): string { return this.counter ? this.counter.text : "" }
   getDotsText(): string { return this.dots ? this.dots.text : "" }
   getSortLabel(): string { return this.sortLabel }
+  /** Text of the group header above stand i ("" = none). */
+  getHeaderText(i: number): string { return this.headers[i] && this.headers[i].shown ? this.headers[i].shown : "" }
+  getHeaderCount(): number { return this.headers.filter((h) => !!h.shown).length }
+
+  /** Small type header above stand i at worldPos; null text or position hides it. */
+  showHeader(i: number, text: string | null, worldPos: vec3 | null): void {
+    const h = this.headers[i]
+    if (!h) return
+    if (!text || !worldPos) {
+      if (h.shown) {
+        h.shown = ""
+        h.root.getTransform().setLocalScale(vec3.zero())
+      }
+      return
+    }
+    if (h.shown !== text) {
+      h.shown = text
+      h.text.text = text
+      h.root.getTransform().setLocalScale(vec3.one())
+    }
+    h.root.getTransform().setWorldPosition(worldPos)
+  }
 
   setTitle(text: string, localPos?: vec3): void {
     if (this.title) this.title.text = text
@@ -96,6 +119,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     this.configured = true
     for (let i = 0; i < slotCount; i++) this.names.push(null)
     for (let i = 0; i < slotCount; i++) this.tags.push(this.buildTag())
+    for (let i = 0; i < slotCount; i++) this.headers.push(this.buildHeader())
     this.buildControls(controlsPos)
   }
 
@@ -170,6 +194,21 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     return {root, texts: [t1, t2, t3, t4], shown: -1}
   }
 
+  /** Small glass pill with the group name (Type sort). */
+  private buildHeader(): {root: SceneObject; text: Text; shown: string} {
+    const D = this.readDistanceCm
+    const k = D / 110
+    const root = obj(this.sceneObject, "GroupHeader", vec3.zero())
+    const h = rowHeight("Label", D) + SPACE.s * k
+    const w = 9 * k
+    glassPanel(root, "GroupHeaderGlass", new vec2(w, h), {radiusCm: h / 2, tint: GLASS_READABLE})
+    const content = obj(root, "Content", new vec3(0, 0, 0.6))
+    const col = makeFlex(content, "Column", FlexDirection.Column, w, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
+    const text = addTextRow(col.so, col.flex, "GroupHeaderText", "Planes", "Label", w - 1, rowHeight("Label", D), PALETTE.text, D)
+    root.getTransform().setLocalScale(vec3.zero())
+    return {root, text, shown: ""}
+  }
+
   private buildControls(pos: vec3): void {
     const D = this.readDistanceCm
     const k = D / 110
@@ -183,7 +222,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     this.dots = addTextRow(row.so, row.flex, "PageDots", "● ○ ○", "Body", 8 * k, h, PALETTE.accent, D)
     this.counter = addTextRow(row.so, row.flex, "PageCounter", "6–10 of 24", "Body", 11 * k, h, PALETTE.text, D)
     this.makeButton(row.so, row.flex, "ShelfNextButton", "›", h, h, () => this._onNext.invoke(), "Round")
-    this.sortContent = this.makeButton(row.so, row.flex, "ShelfSortButton", "Sort: Newest", 13 * k, h, () => this._onSortToggle.invoke(), "Capsule")
+    this.sortContent = this.makeButton(row.so, row.flex, "ShelfSortButton", "Sort: Recent", 13 * k, h, () => this._onSortToggle.invoke(), "Capsule")
   }
 
   private makeButton(parent: SceneObject, flex: FlexLayout, name: string, label: string, w: number, h: number, onTap: () => void, shape: string): ElementContent {

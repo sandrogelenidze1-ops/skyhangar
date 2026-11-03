@@ -47,6 +47,17 @@ export class SH_N_SkyPad extends Scenario {
     await waitUntil(() => main.getHeldState() === "held", 2500)
     await waitUntil(() => main.isSkyPadVisible(), 1500)
     c.check("Sky pad shown while holding", "test hook", main.isSkyPadVisible())
+    // Layering: pad, then its icon, then the held model on top.
+    const orders = (root: SceneObject | null, out: number[] = []): number[] => {
+      if (!root) return out
+      for (const ty of ["Component.MaterialMeshVisual", "Component.Text", "Component.Image"] as const) for (const v of root.getComponents(ty) as MaterialMeshVisual[]) out.push(v.renderOrder)
+      for (let i = 0; i < root.getChildrenCount(); i++) orders(root.getChild(i), out)
+      return out
+    }
+    const modelMin = Math.min(...orders(main.held.getModelObject()))
+    const padMax = Math.max(...orders(findSceneObjectByName("HangarPad")), ...orders(findSceneObjectByName("SkyReturnPad")))
+    c.check("held model renders above both pads and their icons", "inspection", modelMin > padMax, `model min ${modelMin} > pad max ${padMax}`)
+    c.check('sky pad reads "Sky" outside the Hangar', "inspection", main.labels.getSkyPadLabelText() === "Sky", main.labels.getSkyPadLabelText())
     const sky = findSceneObjectByName("SkyReturnPad")
     c.check("SkyReturnPad has the up-arrow glyph", "inspection", !!sky && !!findChild(sky, "SkyUpArrowGlyph"))
     const hangar = findSceneObjectByName("HangarPad")
@@ -56,6 +67,11 @@ export class SH_N_SkyPad extends Scenario {
       `${lab.hangarPadLabel?.big?.text} / ${lab.skyPadLabel?.big?.text}`)
     const gap = main.held.getSkyPadWorldPos().distance(main.held.getPadWorldPos())
     c.check("Sky pad sits next to the hangar pad (< 30 cm)", "inspection", gap < 30 && gap > 10, `${gap.toFixed(1)} cm`)
+    main.labels.setSkyPadRelease(true)
+    c.check('in the Hangar the sky pad reads "Release"', "inspection", main.labels.getSkyPadLabelText() === "Release", main.labels.getSkyPadLabelText())
+    const cap = (main.labels as any).skyPadCaption
+    c.check("Release has the caption", "inspection", cap.big.text + " " + cap.small.text === "Returns it to the sky and removes it from your Hangar.", `${cap.big.text} ${cap.small.text}`)
+    main.labels.setSkyPadRelease(false)
     main.moveHeldOverSkyPad()
     await sleep(200)
     c.check("Sky pad glows with the model over it", "test hook", main.isSkyPadGlowing())

@@ -42,6 +42,7 @@ interface Marker {
   cum: number[] // cumulative arc length (radians) along full
   s: number // current arc position along full (radians)
   rate: number // radians per second along full
+  distScale: number // icon size by distance: DIST_SCALE_NEAR (nearest) .. DIST_SCALE_FAR (farthest); labels keep one size
   oldFadeRad: number // soft fade-in length at the old end of the drawn path (helicopters; 0 = none)
   originTag: vec3 | null // unit dir of the origin airport tag; only set when that airport is within TAG_RANGE_KM on the ground line
   destTag: vec3 | null // same for the destination airport
@@ -51,6 +52,21 @@ interface Seg {
   obj: SceneObject
   rmv: RenderMeshVisual
   level: number // alpha level currently assigned (-1 = none), so materials are only swapped when it changes
+}
+
+// ICON SIZE BY DISTANCE: a gentle 120% for the nearest aircraft down to 70% for the farthest (satellites count as farthest).
+const DIST_SCALE_NEAR = 1.2
+const DIST_SCALE_FAR = 0.7
+function distanceScale(info: SkyObjectInfo): number {
+  if (info.kind === "satellite") return DIST_SCALE_FAR
+  let lo = 1e9, hi = -1e9
+  for (const o of SKY_OBJECTS) {
+    if (o.kind === "satellite") continue
+    lo = Math.min(lo, o.distanceKm)
+    hi = Math.max(hi, o.distanceKm)
+  }
+  const t = hi > lo ? (info.distanceKm - lo) / (hi - lo) : 0
+  return DIST_SCALE_NEAR + (DIST_SCALE_FAR - DIST_SCALE_NEAR) * Math.max(0, Math.min(1, t))
 }
 
 // APPARENT SPEED: every aircraft moves along its fixed route at a slow, steady on-screen angular speed (deg/s),
@@ -352,13 +368,15 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     visual.getTransform().setLocalRotation(quat.lookAt(dir.uniformScale(-1), tan))
     const color = this.getMarkerColor(info.kind)
     const glyph = buildGlyph(this.kit, visual, "Glyph", info.kind, this.glyphSpanCm, color)
+    const ds = distanceScale(info)
+    visual.getTransform().setLocalScale(new vec3(ds, ds, ds))
     const toDirs = (pts: number[][]) => (pts || []).map((p) => skyDir(p[0], p[1]))
     const past = toDirs(info.skyPathPast)
     const ahead = toDirs(info.skyPathAhead)
     // Route: planes follow the real great circle between their airports; everything else (satellites, helicopters, planes
     // with no airport route) runs along its great circle to the horizon both ways. No route ever stops short of the horizon.
     const pr = info.kind === "plane" ? buildPlaneRoute(info) : null
-    const ht = info.kind === "helicopter" ? heliTrack(info) : null // helicopters: only the recorded path already flown
+    const ht = info.kind === "helicopter" ? heliTrack(info) : null // helicopters: the recorded path, then (like planes) a dotted line on along the last heading to the horizon (an estimate)
     let full: vec3[]
     let anchor = 0
     let s0 = 0
@@ -404,7 +422,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     }
     const m: Marker = {
       info, wrapper, visual, glyph, color, dir, tangent, interactable, hovered: false, bright: 0, flash: 0,
-      past, ahead, full, cum, s: s0, rate: motionRate(info, ahd, cum[cum.length - 1]), oldFadeRad: oldFade, originTag, destTag
+      past, ahead, full, cum, s: s0, rate: motionRate(info, ahd, cum[cum.length - 1]), distScale: distanceScale(info), oldFadeRad: oldFade, originTag, destTag
     }
     this.markers.push(m)
     this.markerById[info.id] = m
@@ -448,7 +466,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.routesRoot = root
     for (const m of this.markers) {
       const total = m.cum[m.cum.length - 1]
-      const dotN = m.info.kind === "plane" ? Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG))) : 0
+      const dotN = m.info.kind === "plane" || m.info.kind === "helicopter" ? Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG))) : 0
       const t = this.makeTrailSet(root, "Route_" + m.info.id, dotN, ALL_ROUTE_ALPHA)
       this.routeSets[m.info.id] = t
       this.layoutTrail(t, m)
@@ -560,12 +578,12 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.tintTrail(t, TRAIL_RGB[kind] ?? TRAIL_RGB.plane, pinned ? PINNED_BOOST : 1)
     t.lastS = NaN
 
-    // Dots (planes only): fixed arc positions every DOT_SPACING_DEG from the route start. Everything sits on the
+    // Dots (planes and helicopters): fixed arc positions every DOT_SPACING_DEG from the route start. Everything sits on the
     // dome, so equal arc = equal viewing angle; each dot is DOT_SIZE_DEG across.
     t.dotS = []
     t.dotElev = []
     t.dotCount = 0
-    if (kind === "plane") {
+    if (kind === "plane" || kind === "helicopter") {
       t.dotCount = Math.min(t.dots.length, Math.floor(total / (DOT_SPACING_DEG * DEG)))
       const dotCm = r * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2)
       for (let k = 0; k < t.dotCount; k++) {
@@ -663,7 +681,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       if (Math.abs(target - m.bright) > 0.002) {
         m.bright += (target - m.bright) * clamp01(dt * 10)
         setGlyphBrightness(m.glyph, m.color, m.bright)
-        const s = 1 + 0.25 * m.bright
+        const s = m.distScale * (1 + 0.25 * m.bright)
         m.visual.getTransform().setLocalScale(new vec3(s, s, s))
       }
       if (m.info.kind === "helicopter") spinGlyphRotor(m.glyph, dt, 0.8)

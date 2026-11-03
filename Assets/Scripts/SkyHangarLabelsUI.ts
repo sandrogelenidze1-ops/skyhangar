@@ -83,6 +83,8 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   private fadeCache = new Map<Label, {texts: Text[]; base: vec4[]; rects: RoundedRectangle[]}>()
   private hangarPadLabel!: Label
   private skyPadLabel!: Label
+  private skyPadCaption!: Label
+  private skyPadRelease = false
   private radarLabels: Label[] = []
 
   onAwake(): void {
@@ -96,6 +98,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     for (let i = 0; i < 4; i++) this.radarLabels.push(this.makeLabel("RadarRangeLabel_" + i, 100, "20 km", null, this.padLabelColor, 8))
     this.hangarPadLabel = this.makeLabel("HangarPadLabel", 60, this.hangarPadText, null, this.padLabelColor, 12, true)
     this.skyPadLabel = this.makeLabel("SkyPadLabel", 60, this.skyPadText, null, this.padLabelColor, 12, true)
+    this.skyPadCaption = this.makeLabel("SkyPadCaption", 60, "Returns it to the sky and", "removes it from your Hangar.", this.padLabelColor, 26)
     this.createEvent("UpdateEvent").bind(() => this.update())
   }
 
@@ -108,6 +111,15 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   /** "callsign | code · type | ORIGIN > DEST | Departed … ago · Arriving in …" ("" when hidden). */
   getReticleLabelText(): string { return this.reticle.visible ? this.reticleRows.map((t) => t.text).join(" | ") : "" }
   getReticleLabelWorldPos(): vec3 { return this.reticle.root.getTransform().getWorldPosition() }
+  /** In the Hangar the sky pad reads "Release" with a small caption (it removes the model from the Hangar); otherwise "Sky". */
+  setSkyPadRelease(on: boolean): void {
+    if (on === this.skyPadRelease) return
+    this.skyPadRelease = on
+    this.skyPadLabel.big.text = on ? "Release" : this.skyPadText
+    if (!on && this.skyPadCaption.visible) this.hideLabel(this.skyPadCaption)
+  }
+  getSkyPadLabelText(): string { return this.skyPadLabel.big.text }
+  getSkyPadCaptionText(): string { return this.skyPadCaption.visible ? [this.skyPadCaption.big.text, this.skyPadCaption.small ? this.skyPadCaption.small.text : ""].join(" ") : "" }
   arePadLabelsVisible(): boolean { return this.hangarPadLabel.visible && this.skyPadLabel.visible }
 
   /**
@@ -194,7 +206,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   }
   /** UI-layer labels (pads, stamp, radar ranges) render in front of the world-space sky tags. */
   applyUiOrder(): void {
-    for (const l of [this.hangarPadLabel, this.skyPadLabel, this.stamp, ...this.radarLabels]) setRenderOrderTree(l.root, UI_RENDER_ORDER)
+    for (const l of [this.hangarPadLabel, this.skyPadLabel, this.skyPadCaption, this.stamp, ...this.radarLabels]) setRenderOrderTree(l.root, UI_RENDER_ORDER)
   }
 
   private setAlpha(l: Label, a: number): void {
@@ -222,6 +234,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     if (!visible) {
       if (this.hangarPadLabel.visible) this.hideLabel(this.hangarPadLabel)
       if (this.skyPadLabel.visible) this.hideLabel(this.skyPadLabel)
+      if (this.skyPadCaption.visible) this.hideLabel(this.skyPadCaption)
       return
     }
     this.place(this.hangarPadLabel, hangarPos)
@@ -229,6 +242,11 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     // Level with the pads: same rotation as the pad itself.
     if (hangarRot) this.hangarPadLabel.root.getTransform().setWorldRotation(hangarRot)
     if (skyRot) this.skyPadLabel.root.getTransform().setWorldRotation(skyRot)
+    if (this.skyPadRelease) {
+      const r = skyRot ?? quat.quatIdentity()
+      this.place(this.skyPadCaption, skyPos.add(r.multiplyVec3(new vec3(0, -4.4, 0))))
+      this.skyPadCaption.root.getTransform().setWorldRotation(r)
+    } else if (this.skyPadCaption.visible) this.hideLabel(this.skyPadCaption)
   }
 
   /** A null position hides that tag (airport out of visible range). */
@@ -321,7 +339,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
         g.cornerRadius = Math.min(res.containerHeight / 2, RADIUS.l * k)
       })
     }
-    const role = name.indexOf("RadarRangeLabel") === 0 ? "Label" : name === "EdgeArrowLabel" ? "Headline" : plate && name !== "CollectedStamp" ? "Headline" : "Title"
+    const role = name.indexOf("RadarRangeLabel") === 0 ? "Label" : name === "EdgeArrowLabel" ? "Headline" : name === "SkyPadCaption" ? "Label" : plate && name !== "CollectedStamp" ? "Headline" : "Title"
     const bigT = addTextRow(col.so, col.flex, "Code", big, role, w, rowHeight(role, distance), color, distance)
     let smallT: Text | null = null
     if (small !== null) smallT = addTextRow(col.so, col.flex, "Caption", small, "Label", w, rowHeight("Label", distance), new vec4(color.x, color.y, color.z, 0.8), distance)
@@ -351,9 +369,9 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
       for (const l of [this.origin, this.dest, this.reticle]) this.setAlpha(l, this.skyFade)
     }
     if (this.reticle.visible) l2(this.reticle.root, camRot)
-    for (const l of [this.origin, this.dest, this.stamp, this.hangarPadLabel, this.skyPadLabel, ...this.radarLabels]) {
+    for (const l of [this.origin, this.dest, this.stamp, this.hangarPadLabel, this.skyPadLabel, this.skyPadCaption, ...this.radarLabels]) {
       if (!l.visible) continue
-      if (l === this.hangarPadLabel || l === this.skyPadLabel) continue
+      if (l === this.hangarPadLabel || l === this.skyPadLabel || l === this.skyPadCaption) continue
       const d = camPos.sub(l.root.getTransform().getWorldPosition())
       if (d.length > 0.01) l.root.getTransform().setWorldRotation(quat.lookAt(d.normalize(), vec3.up()))
     }

@@ -391,7 +391,7 @@ export class RouteMap {
     }
     put(this.codes[0], bx + bl / 2, by + 0.95, barKm < 1 ? Math.round(barKm * 1000) + " m" : barKm + " km")
     put(this.codes[1], ax, ay + 1.0, "N")
-    put(this.codes[2], -this.hx + 6.5, this.hy - 1.0, (track.local as {sparse: boolean}).sparse ? "Recent track only" : "")
+    put(this.codes[2], -this.hx + 6.5, this.hy - 1.0, (track.local as {sparse: boolean}).sparse ? "Recent track (estimate ahead)" : "")
     // Start dot at the oldest point; the position dot and glyph follow update()
     const o = this.proj(pts[0])
     this.originDot.enabled = true

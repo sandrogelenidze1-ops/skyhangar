@@ -6,7 +6,7 @@
 // this script only hides that script's old banded dusk dome and clouds once they exist.
 // Must not: touch any UI, card, trail, marker, hangar or radar object.
 
-import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance, horizonStepCompensate, STEP_MAX_C, EDITOR_EDGE_DEG} from "./SkyHangarUtil"
+import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance, editorTone} from "./SkyHangarUtil"
 
 const DEG = Math.PI / 180
 const R = 6000
@@ -20,11 +20,6 @@ const DUSK_STOPS: number[][] = [[-6, 0.95, 0.42, 0.18], [0, 1.0, 0.55, 0.24], [7
 // Night: top #0A0F2E, mid #1B2060, horizon #3A2C70, faint city glow #6B3F8F (boosted in saturation at lookup, see nightStop)
 // Ground colour of the lower hemisphere [day, dusk, night]: a mid-tone, hazy ground, never near-black (dark lens pixels are see-through in the preview)
 const GROUND_COLORS: RGB[] = [[0.5, 0.54, 0.6], [0.5, 0.36, 0.44], [0.4, 0.3, 0.52]]
-// The preview dims everything below the horizon by a measured per-channel ratio (146,196,255 -> 124,182,246 at the horizon); below the
-// horizon we multiply by the inverse (editor only: this whole script is disabled on a device), eased over +-0.5 deg so there is no seam.
-const STEP_BAND_DEG = 0.15
-// Where the step really sits: the editor floor plane is finite, and its far edge is about 2 degrees below the true horizon (measured against
-// the roof railing, whose elevations are known). The dim half-plane covers only elevations below this.
 const GROUND_BLEND_DEG = 14 // the horizon colour eases into the ground colour over this many degrees below the horizon
 const NIGHT_STOPS: number[][] = [[-6, 0.42, 0.247, 0.56], [0, 0.42, 0.247, 0.56], [3, 0.3, 0.2, 0.5], [9, 0.227, 0.173, 0.44], [30, 0.106, 0.125, 0.376], [60, 0.07, 0.09, 0.27], [90, 0.039, 0.059, 0.18]]
 
@@ -266,14 +261,8 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
       const c0 = stopColor(DAY_STOPS, sel), c1 = stopColor(DUSK_STOPS, sel), c2 = nightStop(sel)
       const gk = 1 - smoothstep(-GROUND_BLEND_DEG, 0, el)
       const gc = minLuminance(mix3(GROUND_COLORS, w), luminanceFloor(w)) // the ground never goes below the time-of-day luminance floor
-      const fk = smoothstep(EDITOR_EDGE_DEG + STEP_BAND_DEG, EDITOR_EDGE_DEG - STEP_BAND_DEG, el) // 1 below the editor floor edge, 0 above, eased over a degree
       const cm = [0, 1, 2].map(k => (c0[k] * w[0] + c1[k] * w[1] + c2[k] * w[2]) * (1 - gk) + gc[k] * gk)
-      // Colours brighter than STEP_MAX_C cannot be matched below the step, so the sky eases toward that cap as it nears the step (full colour again
-      // 10 degrees above it) and the ground stays under it; then the compensation brightens everything below the step by the measured inverse.
-      const cap = STEP_MAX_C + (1 - STEP_MAX_C) * smoothstep(EDITOR_EDGE_DEG + 1, EDITOR_EDGE_DEG + 10, el)
-      // a touch of extra compensation in a thin line just under the edge: the preview darkens its very first pixels there a little more
-      const bump = 1 + 0.12 * Math.exp(-Math.pow((el - (EDITOR_EDGE_DEG - 0.1)) / 0.12, 2))
-      const c = horizonStepCompensate(minLuminance(cm.map(x => Math.min(x, cap)), largeSurfaceFloor(w)), fk * bump) // whole sky keeps the 0.65 / 0.55 / 0.45 floor, hue kept
+      const c = minLuminance(editorTone(cm), largeSurfaceFloor(w)) // one uniform editor factor, then the 0.65 / 0.55 / 0.45 floor (hue kept)
       const lin = c
       const slope = [1 / 255, 1 / 255, 1 / 255]
       for (let x = 0; x < W; x++) {

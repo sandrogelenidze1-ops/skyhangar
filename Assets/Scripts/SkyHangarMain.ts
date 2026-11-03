@@ -19,6 +19,7 @@ import {SkyHangarAudioController} from "./SkyHangarAudioController"
 import {SkyHangarMenuBarUI} from "./SkyHangarMenuBarUI"
 import {SkyHangarInfoCardUI, CardContent} from "./SkyHangarInfoCardUI"
 import {buildTrack} from "./SkyHangarRouteMap"
+import {heliTrack} from "./SkyHangarRouteGeo"
 import {SkyHangarLabelsUI} from "./SkyHangarLabelsUI"
 import {SkyHangarShelfUI} from "./SkyHangarShelfUI"
 import {DEG, makeObj} from "./SkyHangarUtil"
@@ -234,10 +235,10 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.radar.onBlipTap.add((info) => this.onBlipTap(info))
     this.shelf.onInspect.add((req) => this.onInspect(req))
     this.shelf.onTap.add((tap) => this.onShelfTap(tap))
-    this.infoCard.onView3D.add(() => this.onView3D())
     this.menuBar.onSky.add(() => this.setMode("sky"))
     this.menuBar.onRadar.add(() => this.setMode("radar"))
     this.menuBar.onHangar.add(() => this.setMode("hangar"))
+    this.menuBar.buildHint()
     this.menuBar.onAllRoutes.add((on) => {
       this.audio.play("menu")
       this.sky.setAllRoutes(on)
@@ -292,6 +293,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTap(info: SkyObjectInfo): void {
+    this.menuBar.dismissHint()
     this.audio.play("tap")
     // Pin flow: tap 1 pins (trail stays); tap 2 on the pinned vehicle opens its card; tap 3 closes the card (pin stays);
     // a further tap on it with the card closed unpins. Another vehicle moves the pin; empty sky unpins (onSkyTapEmpty).
@@ -331,6 +333,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onBlipTap(info: SkyObjectInfo): void {
+    this.menuBar.dismissHint()
     this.audio.play("tap")
     const camPos = this.cameraObject.getTransform().getWorldPosition()
     const radarPos = this.radar.sceneObject.getTransform().getWorldPosition()
@@ -351,6 +354,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTapEmpty(): void {
+    this.menuBar.dismissHint()
     this.audio.play("tap")
     if (this.cardId) this.hideCard()
     if (this.sky.getPinnedId()) this.log("unpin (empty sky)")
@@ -359,6 +363,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyPull(req: PullRequest): void {
+    this.menuBar.dismissHint()
     this.audio.play("pull")
     this.held.beginPull(req.info, req.worldPos, req.interactor)
     this.log("pull " + req.info.id)
@@ -366,6 +371,7 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   /** Hangar inspect: a pinched-and-held shelf model comes into the hand; it goes back to its slot or to the sky on release. */
   private onInspect(req: InspectRequest): void {
+    this.held.finishShelfReturn()
     if (this.held.getState() !== "none") return
     const id = req.info.id
     this.audio.play("pull")
@@ -390,31 +396,13 @@ export class SkyHangarMain extends BaseScriptComponent {
       this.held.endView()
       return
     }
+    if (tap.info) this.held.finishShelfReturn()
     if (!tap.info || this.held.getState() !== "none") return
     const id = tap.info.id
     this.audio.play("tap")
     this.shelf.setEntryHidden(id, true)
     this.held.beginView(tap.info, tap.fromWorld, this.inspectHooks(id))
     this.log("view " + id)
-  }
-
-  /** Info card "View 3D": the sky model comes in front of the user (card stays open); pressing again returns it to the sky. */
-  private onView3D(): void {
-    this.audio.play("tap")
-    if (this.held.isViewing()) {
-      this.held.endView()
-      return
-    }
-    if (this.held.getState() !== "none") {
-      if (this.held.getViewOrigin() === "sky" && this.held.getHeldId() === this.cardId) this.held.sendToSky()
-      return
-    }
-    const info = this.cardId ? this.sky.getInfo(this.cardId) : null
-    if (!info) return
-    const ct = this.cameraObject.getTransform()
-    const from = this.sky.getMarkerWorldPos(info.id) ?? ct.getWorldPosition().add(ct.getWorldRotation().multiplyVec3(new vec3(0, 0, -300)))
-    this.held.beginView(info, from, null)
-    this.log("view3d " + info.id)
   }
 
   private onCollected(info: SkyObjectInfo): void {
@@ -444,7 +432,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   private pushShelfView(): void {
     const vis = this.shelf.getVisibleEntries()
     for (let i = 0; i < this.shelf.visibleSlots; i++) this.shelfUI.setPlaque(i, vis[i] ? this.plaqueLines(vis[i]) : null)
-    this.shelfUI.setControls(this.shelf.getCounterText(), this.shelf.getPage(), this.shelf.getPageCount(), this.shelf.getSort() === "newest" ? "Newest" : "Airline")
+    this.shelfUI.setControls(this.shelf.getCounterText(), this.shelf.getPage(), this.shelf.getPageCount(), this.shelf.getSort() === "newest" ? "Recent" : "Type")
     const n = this.shelf.getCount()
     this.shelfUI.setTitle("My Hangar · " + n + (n === 1 ? " model" : " models"), this.shelf.titleLocalPos())
   }
@@ -521,7 +509,7 @@ export class SkyHangarMain extends BaseScriptComponent {
         airline: i.airline,
         flightLine: i.flight + "  ·  " + i.registration,
         route: "Local flight",
-        times: "No filed route  ·  seen " + SNAPSHOT_UTC.substring(11, 16) + " UTC",
+        times: (heliTrack(i)?.sparse !== false ? "Recent track (route ahead estimated)" : "No filed route") + "  ·  seen " + SNAPSHOT_UTC.substring(11, 16) + " UTC",
         cities: "Helicopter over west London",
         aircraft: i.aircraftTypeName + " (" + i.aircraftType + ")",
         altSpeed: "Altitude " + fmt(i.altitudeFt) + " ft  ·  Speed " + i.speedKt + " kt"
@@ -569,7 +557,15 @@ export class SkyHangarMain extends BaseScriptComponent {
           this.shelfUI.showTag(i, this.shelf.getStandAnchorWorldPos(i).add(new vec3(0, 7 - this.shelf.modelSpanCm * 0.85, 0)))
         } else this.shelfUI.showTag(i, null)
       }
-    } else this.shelfUI.showTag(-1, null)
+      const headers = this.shelf.getVisibleGroupHeaders()
+      for (let i = 0; i < this.shelfUI.getPlaqueSlotCount(); i++) {
+        const text = i < headers.length && ids[i] !== heldId ? headers[i] : null
+        this.shelfUI.showHeader(i, text, text ? this.shelf.getStandAnchorWorldPos(i).add(new vec3(0, this.shelf.modelSpanCm * 1.15 + 3, 0)) : null)
+      }
+    } else {
+      this.shelfUI.showTag(-1, null)
+      for (let i = 0; i < this.shelfUI.getPlaqueSlotCount(); i++) this.shelfUI.showHeader(i, null, null)
+    }
 
     // Trail end labels follow whichever trail is showing (planes: origin + destination codes).
     const tid = this.sky.getTrailFlightId()
@@ -598,6 +594,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     // Pad labels while holding.
     const hs = this.held.getState()
     const holding = hs === "flyingIn" || hs === "held"
+    this.labels.setSkyPadRelease(this.held.isInspecting() && this.held.getViewOrigin() !== "sky") // in the Hangar the sky pad is "Release"
     if (holding && this.held.isPadVisible()) {
       const hp = this.held.getPadLabelPose(false)
       const sp = this.held.getPadLabelPose(true)
@@ -626,7 +623,6 @@ export class SkyHangarMain extends BaseScriptComponent {
     // Radar range labels while the radar is open
     this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])
 
-    this.infoCard.setViewing(this.held.getViewOrigin() === "sky" && this.held.getHeldId() === this.cardId)
     this.sky.assistActive = this.mode === "sky" && this.held.getState() === "none"
     this.pollTapElsewhere()
   }

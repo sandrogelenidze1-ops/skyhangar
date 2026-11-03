@@ -20,7 +20,7 @@ import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildModel, BuiltModel, spinRotors, styleFor} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
-import {glassPanel, obj, PALETTE, setRenderOrderTree} from "./SkyHangarSharedUI"
+import {glassPanel, obj, PALETTE, setRenderOrderTree, UI_RENDER_ORDER} from "./SkyHangarSharedUI"
 import {
   PartKit, makeObj, yawOf, yawOffset, yawRotation, faceDir, easeOutCubic, easeInOut, bezier3, flatForward, flatRight, clamp01, DEG
 } from "./SkyHangarUtil"
@@ -85,6 +85,8 @@ const GLIDE_END_SPEED = 0.35
 const VIEW_OFFSET = new vec3(0, -2, -40)
 const VIEW_DISTANCE_CM = 40
 const VIEW_TURN_RAD_PER_S = 0.5
+/** Render order above the pad band (pad glass, glow and icon all sit in UI_RENDER_ORDER + a few). */
+const HELD_MODEL_ORDER = 400
 const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
 const PAD_OFFSET_SKY = new vec3(16, -5, -80)
 
@@ -163,6 +165,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private model: BuiltModel | null = null
   private holder!: SceneObject // collider wrapper (unit scale, identity)
   private interactable!: Interactable
+  private holderCollider!: ColliderComponent // only live while the model rests or hangs in inspect mode: a gliding model must never catch pinch rays meant for the shelf
   private interactor: Interactor | null = null
   private t = 0
   private fromPos = vec3.zero()
@@ -256,6 +259,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.yawAtPull = this.camYaw()
     const visual = makeObj(this.holder, "HeldVisual")
     this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType)
+    setRenderOrderTree(visual, UI_RENDER_ORDER + HELD_MODEL_ORDER) // layering: pad, then pad icon, then the model on top
     this.holder.enabled = true
     this.fromPos = fromWorld
     this.fromScale = 1.6
@@ -295,6 +299,22 @@ export class SkyHangarHeldController extends BaseScriptComponent {
       this.inspect = hooks
       this.fromScale = hooks.shelfSpanCm / this.modelSpanCm
     }
+  }
+
+  /**
+   * A new pickup while the last Hangar model is still gliding home: land it in its slot now, so every model can be picked up
+   * immediately (the glide used to block pickups for up to 0.9 s). Returns true if a return was finished.
+   */
+  finishShelfReturn(): boolean {
+    const gliding = this.state === "returningToShelf" || ((this.state === "thrown" || this.state === "returning") && this.inspect !== null)
+    if (!gliding) return false
+    const hooks = this.inspect
+    const info = this.info
+    const wasReturning = this.state === "returning"
+    this.clearModel()
+    if (wasReturning && info) this._onReturned.invoke(info)
+    if (hooks) hooks.onReturned()
+    return true
   }
 
   /** Leave inspect mode: a shelf model returns smoothly to its slot, a sky model to its place in the sky. */
@@ -374,6 +394,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     shape.radius = this.modelSpanCm * 0.55
     collider.shape = shape
     collider.fitVisual = false
+    this.holderCollider = collider
     this.interactable = this.holder.createComponent(Interactable.getTypeName()) as Interactable
     this.interactable.onTriggerStart.add((e: InteractorEvent) => this.onGrab(e))
     this.holder.enabled = false
@@ -456,6 +477,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
 
   private setState(s: HeldState): void {
     this.state = s
+    if (this.holderCollider) this.holderCollider.enabled = s === "resting" || s === "viewing"
     if (s === "held") this.samples = []
     if (s === "viewing") {
       this.prevTrig.clear()

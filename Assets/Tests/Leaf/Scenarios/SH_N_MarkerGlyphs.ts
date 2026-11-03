@@ -79,6 +79,15 @@ export class SH_N_MarkerGlyphs extends Scenario {
     main.aimAt("")
     await sleep(600)
     c.check("un-aimed marker returns to normal", "test hook", Math.abs(vis.getTransform().getLocalScale().x - s0) < 0.03)
+    // Icon size by distance: about 120% for the nearest aircraft down to 70% for the farthest; satellites at the small end.
+    const scaleOf = (id: string) => findChild(findSceneObjectByName("SkyMarker_" + id), "Visual")!.getTransform().getLocalScale().x
+    const flying = SKY_OBJECTS.filter((o) => o.kind !== "satellite").slice().sort((x, y) => x.distanceKm - y.distanceKm)
+    const near = scaleOf(flying[0].id)
+    const far = scaleOf(flying[flying.length - 1].id)
+    c.check("nearest aircraft icon is about 120%", "inspection", Math.abs(near - 1.2) < 0.06, `${near.toFixed(2)}`)
+    c.check("farthest aircraft icon is about 70%", "inspection", Math.abs(far - 0.7) < 0.06, `${far.toFixed(2)}`)
+    const mid = flying.slice(1, -1).map((o) => scaleOf(o.id))
+    c.check("icon size shrinks gently with distance", "inspection", flying.slice(0, -1).every((o, i) => scaleOf(o.id) >= scaleOf(flying[i + 1].id) - 0.01) && mid.every((m) => m < 1.21 && m > 0.69))
     c.finish()
   }
 }

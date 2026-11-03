@@ -33,8 +33,6 @@
     cameraObject: false
     coneMesh: false
     cylinderMesh: false
-    dragDelaySeconds: false
-    dragStartDeg: false
     fadeEndElevDeg: false
     fadeStartElevDeg: false
     glyphSpanCm: false
@@ -46,7 +44,6 @@
     showHorizonRing: false
     skyDomeRadiusCm: false
     sphereMesh: false
-    tapMaxSeconds: false
     targetRadiusCm: false
     trailTint: false
     trailWidthCm: false
@@ -78,9 +75,6 @@
       fadeStartElevDeg: !<float> 14.000000
       fadeEndElevDeg: !<float> 0.000000
       reticleSizeCm: !<float> 24.000000
-      tapMaxSeconds: 0.300000
-      dragStartDeg: !<float> 3.000000
-      dragDelaySeconds: 0.150000
       aimAssistDeg: !<float> 3.000000
       showHorizonRing: true
   ScriptTypes:
@@ -111,9 +105,6 @@
     - '// @input float fadeStartElevDeg = 14 {"hint":"Trails are fully opaque at and above this elevation (deg)", "widget":"slider", "min":1, "max":40, "step":0.5}'
     - '// @input float fadeEndElevDeg {"hint":"Trails have faded to nothing at this elevation (deg); smoothstep between the two", "widget":"slider", "min":-5, "max":20, "step":0.5}'
     - '// @input float reticleSizeCm = 24 {"hint":"Aim reticle size (corner-bracket box side), cm at the dome", "widget":"slider", "min":8, "max":60, "step":1}'
-    - '// @input float tapMaxSeconds = 0.3 {"hint":"A pinch released faster than this (s) without moving counts as a tap", "widget":"slider", "min":0.1, "max":0.8, "step":0.05}'
-    - '// @input float dragStartDeg = 3 {"hint":"Ray movement (deg) during a pinch that turns it into a pull", "widget":"slider", "min":1, "max":15, "step":0.5}'
-    - '// @input float dragDelaySeconds = 0.15 {"hint":"A pinch must be held this long (s) before it can turn into a pull, so a normal tap is never read as a drag", "widget":"slider", "min":0.05, "max":0.5, "step":0.01}'
     - '// @input float aimAssistDeg = 3 {"hint":"Aim assist: the vehicle nearest the gaze within this angle (deg) is aimed, and a pinch that hits nothing taps it", "widget":"slider", "min":0, "max":6, "step":0.5}'
     - '// @input bool showHorizonRing = true {"hint":"Show a faint dashed horizon ring so the stand-in sky reads clearly in preview"}'
     - '// @ui {"widget":"group_end"}'

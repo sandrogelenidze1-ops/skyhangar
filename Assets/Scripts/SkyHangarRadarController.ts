@@ -11,6 +11,12 @@ import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, yawOf, yawOffset, yawRotation, DEG} from "./SkyHangarUtil"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
+import {latheMesh} from "./SkyHangarMeshes"
+
+const RING_MIN_SEGMENTS = 96 // smooth circles
+const KT_TO_KM_S = 1.852 / 3600
+const TRAIL_DOTS = 6
+const TRAIL_STEP_S = 10 // each trail dot is this many real seconds further back along the track
 
 interface Blip {
   info: SkyObjectInfo
@@ -18,6 +24,9 @@ interface Blip {
   glyph: BuiltGlyph
   visual: SceneObject
   angle: number // radians, radar-local (0 = up/forward)
+  eastKm: number // position relative to the user, km (moves at the real ground speed along the real heading)
+  northKm: number
+  trail: SceneObject[]
   base: vec4
   hovered: boolean
 }
@@ -90,6 +99,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private lastDim = 1
   private discBasePos = vec3.zero()
   private dimMats: {m: Material; a: number}[] = []
+  private trailMats: {[kind: string]: {m: Material; a: number}[]} = {}
   private _onBlipTap = new Event<SkyObjectInfo>()
   get onBlipTap(): PublicApi<SkyObjectInfo> { return this._onBlipTap.publicApi() }
 
@@ -147,8 +157,11 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     if (!kit) return
     const R = this.diameterCm / 2
     const c = this.radarColor
-    kit.part(this.discRoot, "RadarFace", kit.cylinder, kit.uniqueUnlit(new vec4(0.62, 0.74, 0.88, 0.22)), new vec3(0, -0.4, 0), new vec3(R * 2, 0.3, R * 2))
-    kit.part(this.discRoot, "RadarFaceGlow", kit.cylinder, kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.1)), new vec3(0, -0.2, 0), new vec3(R * 1.2, 0.1, R * 1.2))
+    // Discs from a 96-segment lathe (the shared cylinder is coarse): the face and its glow are round, not faceted.
+    const disc = latheMesh("radar_disc", [[-0.5, 1, 0], [0.5, 1, 0]], RING_MIN_SEGMENTS)
+    const flat = quat.angleAxis(Math.PI / 2, vec3.right()) // the lathe axis is Z; lay it down so its axis is up
+    kit.part(this.discRoot, "RadarFace", disc, kit.uniqueUnlit(new vec4(0.62, 0.74, 0.88, 0.22)), new vec3(0, -0.4, 0), new vec3(R * 2, R * 2, 0.3), flat)
+    kit.part(this.discRoot, "RadarFaceGlow", disc, kit.uniqueUnlit(new vec4(0.85, 0.92, 1.0, 0.1)), new vec3(0, -0.2, 0), new vec3(R * 1.2, R * 1.2, 0.1), flat)
     this.buildRing(kit.uniqueUnlit(new vec4(0.9, 0.95, 1.0, 0.85)), R, 0.22)
     const ringMat = kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.45))
     for (const frac of [1 / 3, 2 / 3]) this.buildRing(ringMat, R * frac, 0.1)
@@ -160,13 +173,15 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     kit.part(this.discRoot, "You", kit.sphere, kit.uniqueUnlit(new vec4(1, 1, 1, 1)), new vec3(0, 0.4, 0), new vec3(1.1, 0.6, 1.1))
     // Soft sweep: a thin bright line plus a fading trailing wedge
     this.sweep = makeObj(this.discRoot, "SweepLine")
-    kit.part(this.sweep, "Sweep", kit.box, kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.9)), new vec3(0, 0.2, -R / 2), new vec3(0.14, 0.08, R))
-    for (let i = 1; i <= 8; i++) {
-      const m = kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.16 * (1 - i / 9)))
+    kit.part(this.sweep, "SweepGlow", kit.box, kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.2)), new vec3(0, 0.18, -R * 0.49), new vec3(0.7, 0.06, R * 0.98))
+    kit.part(this.sweep, "Sweep", kit.box, kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.85)), new vec3(0, 0.2, -R * 0.49), new vec3(0.16, 0.08, R * 0.98))
+    const WEDGES = 14
+    for (let i = 1; i <= WEDGES; i++) {
+      const m = kit.uniqueUnlit(new vec4(c.x, c.y, c.z, 0.2 * (1 - i / (WEDGES + 1))))
       this.sweepMats.push(m)
       const piv = makeObj(this.sweep, "SweepTrail_" + i)
-      piv.getTransform().setLocalRotation(quat.angleAxis(i * 0.07, vec3.up()))
-      kit.part(piv, "Wedge", kit.box, m, new vec3(0, 0.15, -R / 2), new vec3(R * 0.075, 0.05, R))
+      piv.getTransform().setLocalRotation(quat.angleAxis(i * 0.045, vec3.up()))
+      kit.part(piv, "Wedge", kit.box, m, new vec3(0, 0.15, -R * 0.49), new vec3(R * 0.05, 0.05, R * 0.98))
     }
     // Blips: the same flat glyphs and colours as the sky, lying on the disc (nose = heading)
     const blipRoot = makeObj(this.discRoot, "Blips")
@@ -183,7 +198,21 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       const visual = makeObj(obj, "BlipVisual")
       visual.getTransform().setLocalPosition(new vec3(0, 0.5, 0))
       const glyph = buildGlyph(this.sky.partKit, visual, "Glyph", info.kind, info.kind === "satellite" ? 2.0 : 2.4, base)
-      const b: Blip = {info, obj, glyph, visual, angle: 0, base, hovered: false}
+      const trail: SceneObject[] = []
+      if (info.kind !== "satellite") {
+        if (!this.trailMats[info.kind]) {
+          this.trailMats[info.kind] = []
+          for (let l = 0; l < TRAIL_DOTS; l++) {
+            const a = 0.55 * (1 - l / TRAIL_DOTS)
+            this.trailMats[info.kind].push({m: kit.uniqueUnlit(new vec4(base.x, base.y, base.z, a)), a})
+          }
+        }
+        for (let l = 0; l < TRAIL_DOTS; l++) {
+          const sz = 0.5 * (1 - 0.6 * (l / TRAIL_DOTS))
+          trail.push(kit.part(blipRoot, "BlipTrail_" + info.id + "_" + l, kit.sphere, this.trailMats[info.kind][l].m, vec3.zero(), new vec3(sz, 0.2, sz)))
+        }
+      }
+      const b: Blip = {info, obj, glyph, visual, angle: 0, eastKm: 0, northKm: 0, trail, base, hovered: false}
       it.onHoverEnter.add(() => (b.hovered = true))
       it.onHoverExit.add(() => (b.hovered = false))
       it.onTriggerEnd.add(() => this._onBlipTap.invoke(info))
@@ -204,7 +233,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
 
   private buildRing(mat: Material, r: number, w: number): void {
     const kit = this.sky.partKit
-    const n = Math.max(24, Math.floor(r * 3))
+    const n = Math.max(RING_MIN_SEGMENTS, Math.floor(r * 6))
     const ring = makeObj(this.discRoot, "RangeRing_" + Math.round(r))
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2
@@ -213,17 +242,52 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     }
   }
 
-  /** Blip position: real azimuth relative to the facing direction at open time, ground distance scaled. */
+  /** Blip start: real azimuth and ground distance at the moment the radar opens; from then on each blip moves on its own (see moveBlips). */
   private layoutBlips(): void {
-    const R = this.diameterCm / 2
     for (const b of this.blips) {
-      const rel = b.info.azimuthDeg * DEG - this.yawAtOpen
-      b.angle = rel
-      const frac = Math.min(0.97, b.info.kind === "satellite" ? 0.95 : b.info.distanceKm / this.rangeKm)
-      b.obj.getTransform().setLocalPosition(new vec3(Math.sin(rel) * R * frac, 0, -Math.cos(rel) * R * frac))
+      const az = b.info.azimuthDeg * DEG
+      const d = b.info.kind === "satellite" ? this.rangeKm * 0.95 : b.info.distanceKm
+      b.eastKm = Math.sin(az) * d
+      b.northKm = Math.cos(az) * d
       // Glyph lies flat (faces +Y), nose along the heading relative to the radar's up direction.
       const hdg = b.info.trackDeg * DEG - this.yawAtOpen
       b.visual.getTransform().setLocalRotation(quat.angleAxis(-hdg, vec3.up()).multiply(quat.angleAxis(-Math.PI / 2, vec3.right())))
+      this.placeBlip(b)
+    }
+  }
+
+  /** Disc-local position of a blip from its km position (azimuth relative to the facing direction at open time). */
+  private placeBlip(b: Blip): void {
+    const R = this.diameterCm / 2
+    const dist = Math.hypot(b.eastKm, b.northKm)
+    const rel = Math.atan2(b.eastKm, b.northKm) - this.yawAtOpen
+    b.angle = rel
+    const frac = Math.min(0.97, dist / this.rangeKm)
+    b.obj.getTransform().setLocalPosition(new vec3(Math.sin(rel) * R * frac, 0, -Math.cos(rel) * R * frac))
+  }
+
+  /** Real motion: each aircraft advances at its recorded ground speed along its recorded heading; a short trail of fading dots marks the last minute. */
+  private moveBlips(dt: number): void {
+    const R = this.diameterCm / 2
+    const cmPerKm = R / this.rangeKm
+    for (const b of this.blips) {
+      if (b.info.kind === "satellite") continue
+      const v = b.info.speedKt * KT_TO_KM_S
+      const trk = b.info.trackDeg * DEG
+      b.eastKm += Math.sin(trk) * v * dt
+      b.northKm += Math.cos(trk) * v * dt
+      this.placeBlip(b)
+      const hdg = trk - this.yawAtOpen
+      const dir = new vec3(Math.sin(hdg), 0, -Math.cos(hdg)) // heading in disc space
+      const p = b.obj.getTransform().getLocalPosition()
+      const inside = Math.hypot(b.eastKm, b.northKm) < this.rangeKm
+      for (let l = 0; l < b.trail.length; l++) {
+        const back = v * TRAIL_STEP_S * (l + 1) * cmPerKm
+        const q = p.sub(dir.uniformScale(back)).add(new vec3(0, 0.3, 0))
+        if (q.length > R * 0.99 || !inside) { b.trail[l].enabled = false; continue }
+        b.trail[l].enabled = true
+        b.trail[l].getTransform().setLocalPosition(q)
+      }
     }
   }
 
@@ -246,6 +310,11 @@ export class SkyHangarRadarController extends BaseScriptComponent {
         const c = d.m.mainPass.baseColor
         d.m.mainPass.baseColor = new vec4(c.x, c.y, c.z, d.a * dim)
       }
+    }
+    this.moveBlips(dt)
+    for (const kind in this.trailMats) for (const d of this.trailMats[kind]) {
+      const c = d.m.mainPass.baseColor
+      d.m.mainPass.baseColor = new vec4(c.x, c.y, c.z, d.a * dim)
     }
     this.sweepAngle = (this.sweepAngle + (dt / this.sweepSeconds) * Math.PI * 2) % (Math.PI * 2)
     this.sweep.getTransform().setLocalRotation(quat.angleAxis(-this.sweepAngle, vec3.up()))

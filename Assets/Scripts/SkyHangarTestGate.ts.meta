@@ -1,0 +1,50 @@
+- !<AssetImportMetadata/1b125b05-6f6d-49c8-9aa8-51d971f5b40f>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> deef1541-eded-47b3-b9f3-9a134283736a
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> deef1541-eded-47b3-b9f3-9a134283736a
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 507ab580-0540-46ac-a649-d8bcbd843319
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/507ab580-0540-46ac-a649-d8bcbd843319>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: b44c5c08-c0c1-4b21-901d-60957bcf7217
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    enableTests: false
+    leafObjects: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - enableTests: false
+      leafObjects: !<reference.SceneObject[]>
+        []
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @input bool enableTests {"hint":"Turn on LEAF test support (LEAF Plugin Bridge + LeafIndex). Leave OFF for normal runs and recordings."}'
+    - '// @input SceneObject[] leafObjects = {} {"hint":"Objects that belong to LEAF: LEAF Plugin Bridge and LeafIndex"}'
