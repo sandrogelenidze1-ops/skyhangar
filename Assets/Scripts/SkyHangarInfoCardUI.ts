@@ -21,7 +21,7 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {MapTrack, RouteMap} from "./SkyHangarRouteMap"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  FONT, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassSurface, GLASS, makeFlex, obj, roleSize, rowHeight,
+  fontFor, opticalLiftCm, liftContent, PALETTE, RADIUS, SPACE, TEXT, addDivider, applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassSurface, GLASS, makeFlex, obj, roleSize, rowHeight,
   FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
@@ -432,15 +432,15 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
     const so = obj(holder, name + "Text", new vec3(0, 0, 0.2))
     const t = so.createComponent("Component.Text") as Text
     t.text = text
-    t.font = FONT
+    t.font = fontFor(500)
     t.depthTest = true
     t.size = roleSize("Label", D)
-    ;(t as Text & {weight?: number}).weight = 600
     t.textFill.color = TEXT.primary
     t.horizontalAlignment = HorizontalAlignment.Center
     t.verticalAlignment = VerticalAlignment.Center
     t.horizontalOverflow = HorizontalOverflow.Shrink
-    t.layoutRect = Rect.create(-w * 0.44, w * 0.44, -h / 2, h / 2)
+    const lift = opticalLiftCm(text, t.size)
+    t.layoutRect = Rect.create(-w * 0.44, w * 0.44, -h / 2 + lift, h / 2 + lift)
     addFlexChild(holder, flex, w, h + 0.2 * k)
     return t
   }
@@ -470,6 +470,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
       ec.leadingIconSize = Math.min(w, h) * 0.55
     }
     ec.textSize = roleSize(look === "tab" ? "Headline" : "Button", D)
+    if (label) liftContent(ec, opticalLiftCm(label, ec.textSize))
     tintContent(ec, TEXT.primary, TEXT.primary)
     btn.onTriggerUp.add(() => onTap())
     enlargeHitArea(btn)

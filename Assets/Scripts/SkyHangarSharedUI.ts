@@ -11,6 +11,7 @@ import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import {FlexItem} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexItem"
 import {FlexAlign, FlexAlignSelf, FlexDirection, FlexJustify} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexTypes"
+import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/ElementContent"
 import {RoundedRectangle, RoundedRectBlendMode} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
 
 // ── Palette (round 1 "Colors" + round 2 #9). Never pure black panels.
@@ -86,12 +87,69 @@ export const MARK = {
 
 // ── Type scale — single source of truth. Sizes are Lens Text sizes at the 110 cm reference distance;
 // em height (cm) = size / 43.886. Body 54 => ~1.34 cm at 1.2 m (rule: >= 1.3 cm); Title 88 => ~2.2 cm at 1.2 m.
-// One font everywhere: Space Grotesk (SIL OFL), regular/medium/semibold weights on glass.
+// One font family everywhere: Plus Jakarta Sans (SIL OFL), static Regular / Medium / SemiBold files.
+// Regular = small text, Medium = UI labels and buttons, SemiBold = big numbers and titles.
 export const FONT_SIZE_SCALE = 1.0
-export const FONT = requireAsset("../Fonts/Space Grotesk.ttf") as Font
+export const FONT_REGULAR = requireAsset("../Fonts/PlusJakartaSans-Regular.ttf") as Font
+export const FONT_MEDIUM = requireAsset("../Fonts/PlusJakartaSans-Medium.ttf") as Font
+export const FONT_SEMIBOLD = requireAsset("../Fonts/PlusJakartaSans-SemiBold.ttf") as Font
+export const FONT = FONT_MEDIUM // default UI font
+/** The static font file for a CSS-style weight (400 regular, 500 medium, 600+ semibold). */
+export function fontFor(weight: number): Font {
+  return weight >= 600 ? FONT_SEMIBOLD : weight >= 500 ? FONT_MEDIUM : FONT_REGULAR
+}
+// ── Optical text centring. Lens centres a Text's line box (measured: the OS/2 win metrics, ascent 1.296 em, descent 0.356 em) on its container, so the
+// glyphs sit low by (line centre - glyph centre). One shared helper lifts every text by that amount: caps / digits centre on
+// the cap-height midpoint, text with lowercase on the mean of the cap-height and x-height midpoints.
+export const FONT_METRICS = {ascent: 1.038, descent: 0.222, cap: 0.745, xHeight: 0.54, chevronCentre: 0.269}
+const LINE_CENTRE_EM = (FONT_METRICS.ascent - FONT_METRICS.descent) / 2
+/** em fraction to lift `text` so its glyphs (not its line box) centre on the container centre. */
+export function opticalLiftEm(text: string): number {
+  const centre = /[a-z]/.test(text) ? (FONT_METRICS.cap + FONT_METRICS.xHeight) / 4 : FONT_METRICS.cap / 2
+  return LINE_CENTRE_EM - centre
+}
+/** em height in cm of a Lens text size (same convention as roleHeightCm). */
+export function emCm(size: number): number {
+  return size / 43.886
+}
+/** cm to lift a text of this size so the visual centre of its glyphs sits on the container centre. */
+export function opticalLiftCm(text: string, size: number): number {
+  return opticalLiftEm(text) * emCm(size)
+}
+/** Lift of the `‹` `›` guillemets (their bounding box centre is 0.269 em above the baseline, horizontally centred on the advance). */
+export function chevronLiftCm(size: number): number {
+  return (LINE_CENTRE_EM - FONT_METRICS.chevronCentre) * emCm(size)
+}
+/** Shift a UIKit ElementContent's text/icon row up by liftCm (its container is created lazily, so it is applied once it exists). */
+export function liftContent(ec: ElementContent, liftCm: number): void {
+  if (Math.abs(liftCm) < 1e-4) return
+  const ev = ec.createEvent("UpdateEvent")
+  ev.bind(() => {
+    const c = (ec as unknown as {contentContainer: SceneObject | null}).contentContainer
+    if (!c || isNull(c)) return
+    const t = c.getTransform()
+    const p = t.getLocalPosition()
+    if (Math.abs(p.y - liftCm) > 1e-4) t.setLocalPosition(new vec3(p.x, liftCm, p.z))
+  })
+}
+/** Advance widths (1/1000 em, SemiBold, printable ASCII) for placing text runs without a text-measuring API. */
+const ADV_SEMIBOLD = [175,341,464,873,647,1022,774,289,351,351,520,642,328,566,347,481,716,392,598,611,646,615,601,554,631,601,347,367,642,642,642,555,928,692,692,777,741,601,584,813,734,272,390,671,539,874,739,878,646,878,654,647,532,712,682,1008,640,648,576,382,481,382,642,641,372,578,670,606,670,613,402,655,586,245,245,567,245,919,586,653,670,670,362,512,405,586,550,855,535,569,471,371,363,371,642]
+export function textWidthEm(text: string): number {
+  let w = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    w += c >= 32 && c <= 126 ? ADV_SEMIBOLD[c - 32] : 600
+  }
+  return w / 1000
+}
+
 /** Point a UIKit ElementContent at the project font (UIKit keeps the field private). */
 export function applyFontToContent(ec: unknown): void {
   ;(ec as {_font: Font})._font = FONT
+}
+/** Same, for another weight (400 / 500 / 600). */
+export function applyFontToContentWeight(ec: unknown, weight: number): void {
+  ;(ec as {_font: Font})._font = fontFor(weight)
 }
 export type TextRole =
   | "Display" | "Title" | "Headline" | "Body" | "Label"
@@ -118,9 +176,8 @@ export function roleHeightCm(role: TextRole, distanceCm: number = 110): number {
   return roleSize(role, distanceCm) / 43.886
 }
 export function applyTextRole(t: Text, role: TextRole, distanceCm: number = 110): void {
-  t.font = FONT
+  t.font = fontFor(TYPE_SCALE[role].weight)
   t.size = roleSize(role, distanceCm)
-  ;(t as Text & {weight?: number}).weight = TYPE_SCALE[role].weight
 }
 
 // ── Spacing + corner radius scale (cm at 110 cm; multiply by distance/110)
@@ -261,7 +318,7 @@ export function glassSurface(
   parent: SceneObject,
   name: string,
   size: vec2,
-  opts: {radiusCm: number; fill?: number; rim?: number; solid?: boolean; glow?: boolean}
+  opts: {radiusCm: number; fill?: number; rim?: number; rimCm?: number; solid?: boolean; glow?: boolean}
 ): {so: SceneObject; rect: RoundedRectangle; setHover: (on: boolean) => void; resize: (size: vec2) => void; setBacking: (on: boolean) => void} {
   const so = obj(parent, name)
   const radius = Math.min(opts.radiusCm, Math.min(size.x, size.y) / 2)
@@ -293,7 +350,7 @@ export function glassSurface(
   }
   if (rim > 0) {
     rect.border = true
-    rect.borderSize = GLASS.rimCm
+    rect.borderSize = opts.rimCm ?? GLASS.rimCm
     rect.borderType = "Gradient"
     rect.borderGradientType = "Linear"
     rect.setBorderGradientPositions(new vec2(0, 1), new vec2(0, -1))
@@ -373,13 +430,21 @@ export function addTextRow(
   t.verticalAlignment = VerticalAlignment.Center
   t.horizontalOverflow = HorizontalOverflow.Shrink
   t.verticalOverflow = VerticalOverflow.Overflow
-  t.layoutRect = Rect.create(-widthCM / 2, widthCM / 2, -heightCM / 2, heightCM / 2)
+  const lift = opticalLiftCm(text, t.size)
+  t.layoutRect = Rect.create(-widthCM / 2, widthCM / 2, -heightCM / 2 + lift, heightCM / 2 + lift)
   const item = so.createComponent(FlexItem.getTypeName()) as FlexItem
   item.overrideWidth = widthCM
   item.overrideHeight = heightCM
   item.alignSelf = FlexAlignSelf.Center
   item.flexShrink = 0
   parentFlex.addItems([item])
+  // The flex item re-centres a Text's layout rect on every layout pass, so keep the optical lift applied after it.
+  const host = so.createComponent("Component.ScriptComponent") as ScriptComponent
+  host.createEvent("LateUpdateEvent").bind(() => {
+    const r = t.layoutRect
+    const d = lift - (r.top + r.bottom) / 2
+    if (Math.abs(d) > 1e-4) t.layoutRect = Rect.create(r.left, r.right, r.bottom + d, r.top + d)
+  })
   return t
 }
 

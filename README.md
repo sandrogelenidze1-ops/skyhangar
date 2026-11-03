@@ -71,7 +71,7 @@ icons are Google Material Symbols.
 - Routes and airlines: adsbdb.com.
 - Satellite orbital elements: CelesTrak.
 - Map coastlines: Natural Earth 110m coastline (naturalearthdata.com), public domain, simplified for this Lens.
-- Font: Space Grotesk by Florian Karsten, SIL Open Font License 1.1 (Google Fonts).
+- Font: Plus Jakarta Sans by Tokotype (The Plus Jakarta Sans Project Authors), SIL Open Font License 1.1 (licence text in `licenses/PlusJakartaSans-OFL.txt`).
 - Built with Lens Studio, Spectacles Interaction Kit and Spectacles UI Kit.
 
 ## Disclosures

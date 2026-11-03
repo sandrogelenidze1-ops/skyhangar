@@ -126,6 +126,7 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   // ======================= public state (for tests) =======================
   getMode(): SkyMode { return this.mode }
+  isAllRoutesOn(): boolean { return this.routesOn }
   isReady(): boolean { return this.ready }
   getCardFlightId(): string { return this.infoCard.getShownId() }
   isCardVisible(): boolean { return this.infoCard.isVisible() }
@@ -235,14 +236,19 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.radar.onBlipTap.add((info) => this.onBlipTap(info))
     this.shelf.onInspect.add((req) => this.onInspect(req))
     this.shelf.onTap.add((tap) => this.onShelfTap(tap))
-    this.menuBar.onSky.add(() => this.setMode("sky"))
-    this.menuBar.onRadar.add(() => this.setMode("radar"))
-    this.menuBar.onHangar.add(() => this.setMode("hangar"))
-    this.menuBar.buildHint()
-    this.menuBar.onAllRoutes.add((on) => {
+    // Radar and Hangar are toggled panels (tap the open one again to return to the sky); Routes is an overlay on the sky view.
+    this.menuBar.onRadar.add(() => this.setMode(this.mode === "radar" ? "sky" : "radar"))
+    this.menuBar.onHangar.add(() => this.setMode(this.mode === "hangar" ? "sky" : "hangar"))
+    this.menuBar.onAllRoutes.add(() => {
+      if (this.mode !== "sky") {
+        this.routesOn = true // tapping Routes while a panel is open closes it and shows the sky with routes on
+        this.applyRoutes()
+        this.setMode("sky")
+        return
+      }
       this.audio.play("menu")
-      this.sky.setAllRoutes(on)
-      this.log("all routes " + on)
+      this.routesOn = !this.routesOn
+      this.applyRoutes()
     })
     this.infoCard.setMenuTopProvider(() => this.menuBar.getTopViewAngleDeg())
     this.infoCard.onClose.add(() => this.hideCard())
@@ -266,6 +272,13 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private layerTick = 0
   private lastCardUp = false
+
+  private routesOn = false
+  private applyRoutes(): void {
+    this.sky.setAllRoutes(this.routesOn)
+    this.menuBar.setAllRoutesOn(this.routesOn)
+    this.log("all routes " + this.routesOn)
+  }
 
   private setMode(mode: SkyMode): void {
     this.audio.play("menu")
@@ -293,7 +306,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTap(info: SkyObjectInfo): void {
-    this.menuBar.dismissHint()
     this.audio.play("tap")
     // Pin flow: tap 1 pins (trail stays); tap 2 on the pinned vehicle opens its card; tap 3 closes the card (pin stays);
     // a further tap on it with the card closed unpins. Another vehicle moves the pin; empty sky unpins (onSkyTapEmpty).
@@ -333,7 +345,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onBlipTap(info: SkyObjectInfo): void {
-    this.menuBar.dismissHint()
     this.audio.play("tap")
     const camPos = this.cameraObject.getTransform().getWorldPosition()
     const radarPos = this.radar.sceneObject.getTransform().getWorldPosition()
@@ -354,7 +365,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTapEmpty(): void {
-    this.menuBar.dismissHint()
     this.audio.play("tap")
     if (this.cardId) this.hideCard()
     if (this.sky.getPinnedId()) this.log("unpin (empty sky)")
@@ -363,7 +373,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyPull(req: PullRequest): void {
-    this.menuBar.dismissHint()
     this.audio.play("pull")
     this.held.beginPull(req.info, req.worldPos, req.interactor)
     this.log("pull " + req.info.id)

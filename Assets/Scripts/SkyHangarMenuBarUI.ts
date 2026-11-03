@@ -1,9 +1,10 @@
 // SkyHangarMenuBarUI.ts
-// Owns: the slim menu bar (UIKit BackPlate + FlexLayout row of three Buttons: Sky, Radar, Hangar),
+// Owns: the slim menu bar (UIKit BackPlate + FlexLayout row of three toggle Buttons: Routes, Radar, Hangar),
 // always in the lower part of the view. Lazy-follow: it keeps a spot below the view centre and drifts
 // after you when you turn or look up/down, settling in about a second (never snaps, never left behind).
 // Compact and dim while you look at the sky; brightens when you look down near it or aim at a button.
-// Public API: setActiveMode, getActiveMode, isBright, isInView, getWorldPos, getViewAngles. Emits: onSky, onRadar, onHangar.
+// Public API: setActiveMode (radar / hangar lit, sky = none), setAllRoutesOn / isAllRoutesOn, getActiveMode, isBright, isInView, getWorldPos,
+// getViewAngles. Emits: onAllRoutes (Routes tapped), onRadar, onHangar.
 // Part B restyles the buttons (round glass); the API stays the same.
 // Passive view — the main script decides what each mode does.
 
@@ -11,24 +12,17 @@ import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRec
 import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/ElementContent"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
-import {applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassPanel, glassSurface, GLASS, makeFlex, obj, GLASS_READABLE, roleSize, rowHeight, PALETTE, SPACE, TEXT, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
+import {applyFontToContent, addFlexChild, enlargeHitArea, addTextRow, glassSurface, GLASS, makeFlex, obj, roleSize, rowHeight, PALETTE, SPACE, TEXT, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
 
-const ICON_SKY = requireAsset("../Icons/cloud.png") as Texture
 const ICON_RADAR = requireAsset("../Icons/radar.png") as Texture
 const ICON_HANGAR = requireAsset("../Icons/warehouse.png") as Texture
 const ICON_ROUTES = requireAsset("../Icons/routes_128x128 2.png") as Texture
 
-const HINT_STEPS = ["Look up to find aircraft", "Aim and pinch to pin it", "Pinch and drag to the Hangar"]
-const HINT_STEP_SECONDS = 2.5
-const DOUBLE_TAP_SECONDS = 0.8
 const GLYPH_MIN_OPACITY = 0.9
-const TIP_SECONDS = 1.5 // "All routes" label
-const TIP_FADE_IN_S = 0.2
-const TIP_FADE_OUT_S = 0.3
 
 @component
 export class SkyHangarMenuBarUI extends BaseScriptComponent {
-  @ui.label('<span style="color: #60A5FA;">SkyHangarMenuBarUI – Sky / Radar / Hangar bar</span>')
+  @ui.label('<span style="color: #60A5FA;">SkyHangarMenuBarUI – Routes / Radar / Hangar bar</span>')
   @ui.separator
   @ui.group_start("References")
   @input
@@ -77,9 +71,6 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   @hint("Opacity while dim (looking at the sky)")
   @widget(new SliderWidget(0.1, 1, 0.05))
   dimOpacity: number = 0.45
-  @input
-  @hint("Button labels: Sky, Radar, Hangar")
-  labels: string[] = ["Sky", "Radar", "Hangar"]
   @ui.group_end
 
   private buttons: Button[] = []
@@ -96,31 +87,13 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   private frames = 0
   private menuHeightCm = 8
   private lastOpacity = -1
-  private _onSky = new Event<void>()
   private _onRadar = new Event<void>()
   private _onHangar = new Event<void>()
-  private _onAllRoutes = new Event<boolean>()
-  private toggleRoot: SceneObject | null = null
-  private toggleBtn: Button | null = null
-  private toggleContent: ElementContent | null = null
-  private toggleActive: SceneObject | null = null
+  private _onAllRoutes = new Event<void>()
   private allRoutesOn = false
-  private tipRoot: SceneObject | null = null
-  private tipGlass: RoundedRectangle | null = null
-  private tipText: Text | null = null
-  private tipT = 0
-  private hintRoot: SceneObject | null = null
-  private hintText: Text | null = null
-  private hintStep = -1 // -1 = not showing
-  private hintT = 0
-  private hintPlays = 0
-  private hintStarted = false
-  private lastSkyTap = -10
-  private toggleExtraCm = 0 // height the toggle adds above the bar (incl. gap), for cards to clear
-  get onSky(): PublicApi<void> { return this._onSky.publicApi() }
   get onRadar(): PublicApi<void> { return this._onRadar.publicApi() }
   get onHangar(): PublicApi<void> { return this._onHangar.publicApi() }
-  get onAllRoutes(): PublicApi<boolean> { return this._onAllRoutes.publicApi() }
+  get onAllRoutes(): PublicApi<void> { return this._onAllRoutes.publicApi() }
 
   onAwake(): void {
     this.build()
@@ -149,136 +122,38 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   }
   /** Elevation (deg, relative to the view centre) of the bar's top edge, at full size: cards keep clear of it. */
   getTopViewAngleDeg(): number {
-    const extra = this.mode === "sky" ? this.toggleExtraCm : 0
-    return this.getViewAngles().y + (Math.atan2(this.menuHeightCm / 2 + extra, this.distanceCm) * 180) / Math.PI
+    return this.getViewAngles().y + (Math.atan2(this.menuHeightCm / 2, this.distanceCm) * 180) / Math.PI
   }
   isAllRoutesOn(): boolean { return this.allRoutesOn }
   setAllRoutesOn(on: boolean): void {
     this.allRoutesOn = on
-    if (this.toggleActive) this.toggleActive.getTransform().setLocalScale(on ? vec3.one() : vec3.zero())
-    this.tintToggleIcon(on)
+    this.applyButtonState(0, on)
   }
-  // ---- first-use hint ----
-  isHintVisible(): boolean { return this.hintStep >= 0 }
-  getHintText(): string { return this.hintStep >= 0 ? HINT_STEPS[this.hintStep] : "" }
-  /** How many times the hint has started (once at start, plus once per quick double-tap on Sky). */
-  getHintPlays(): number { return this.hintPlays }
-  getHintWorldPos(): vec3 | null { return this.hintRoot ? this.hintRoot.getTransform().getWorldPosition() : null }
-  showHint(): void {
-    if (!this.hintRoot || this.mode !== "sky") return
-    this.hintStep = 0
-    this.hintT = 0
-    this.hintPlays++
-    this.applyHint()
-  }
-  dismissHint(): void {
-    if (this.hintStep < 0) return
-    this.hintStep = -1
-    this.applyHint()
-  }
-  private applyHint(): void {
-    if (!this.hintRoot || !this.hintText) return
-    if (this.hintStep >= 0) this.hintText.text = HINT_STEPS[this.hintStep]
-    this.hintRoot.getTransform().setLocalScale(this.hintStep >= 0 ? vec3.one() : vec3.zero())
-  }
-
   isBright(): boolean { return this.bright }
   getButtonObject(mode: string): SceneObject | null {
-    const i = ["sky", "radar", "hangar"].indexOf(mode)
+    const i = ["routes", "radar", "hangar"].indexOf(mode)
     return i >= 0 && this.buttons[i] ? this.buttons[i].sceneObject : null
   }
 
+  /** Radar / Hangar are panels: the open one is lit; "sky" (home) lights neither. Routes is an overlay with its own state. */
   setActiveMode(mode: string): void {
     this.mode = mode
-    const modes = ["sky", "radar", "hangar"]
-    for (let i = 0; i < this.buttons.length; i++) {
-      const on = modes[i] === mode
-      try {
-        if (this.buttons[i].isOn !== on) this.buttons[i].isOn = on
-      } catch (e) {
-        this.modeDirty = true
-      }
-      if (this.accents[i]) this.accents[i].getSceneObject().getTransform().setLocalScale(on ? vec3.one() : vec3.zero())
-      if (this.labelTexts[i]) this.labelTexts[i].textFill.color = TEXT.primary // the label sits on the frosted bar below the disc, so it stays white
-      if (this.contents[i]) this.tintIcon(this.contents[i], on)
+    this.applyButtonState(1, mode === "radar")
+    this.applyButtonState(2, mode === "hangar")
+    this.applyButtonState(0, this.allRoutesOn)
+  }
+
+  /** Lit = solid white disc + dark glyph (and the toggle's isOn); unlit = quiet frosted disc + white glyph. */
+  private applyButtonState(i: number, on: boolean): void {
+    if (!this.buttons[i]) return
+    try {
+      if (this.buttons[i].isOn !== on) this.buttons[i].isOn = on
+    } catch (e) {
+      this.modeDirty = true
     }
-    if (this.toggleRoot) this.toggleRoot.getTransform().setLocalScale(mode === "sky" ? vec3.one() : vec3.zero())
-    if (mode !== "sky") this.dismissHint()
-    if (mode !== "sky" && this.tipRoot) { this.tipT = 0; this.tipRoot.getTransform().setLocalScale(vec3.zero()) }
-  }
-
-  /** Label alpha: quick fade in, hold, fade out over the 1.5 s. */
-  private applyTip(): void {
-    if (!this.tipGlass || !this.tipText) return
-    const a = Math.max(0, Math.min(1, (TIP_SECONDS - this.tipT) / TIP_FADE_IN_S, this.tipT / TIP_FADE_OUT_S))
-    this.tipGlass.opacity = a
-    const c = this.tipText.textFill.color
-    this.tipText.textFill.color = new vec4(c.x, c.y, c.z, a)
-  }
-
-  /** Small round icon-only toggle above the Sky button (Sky mode only): every vehicle's faint route line. Tap fades in an "All routes" glass label for 1.5 s. */
-  private buildAllRoutesToggle(panel: SceneObject, pillH: number, D: number, k: number): void {
-    const d = this.buttonWidthCm * 0.7
-    const gap = 1 // cm above the bar
-    this.toggleExtraCm = gap + d
-    const root = obj(panel, "AllRoutesToggle", new vec3(0, pillH / 2 + gap + d / 2, 0))
-    this.toggleRoot = root
-    const disc = glassSurface(root, "AllRoutesGlass", new vec2(d, d), {radiusCm: d, fill: 0.67, rim: 0.7})
-    const acc = glassSurface(root, "AllRoutesActive", new vec2(d, d), {radiusCm: d, solid: true, rim: 0})
-    acc.so.getTransform().setLocalPosition(new vec3(0, 0, 0.04))
-    acc.so.getTransform().setLocalScale(vec3.zero())
-    this.toggleActive = acc.so
-    const so = obj(root, "AllRoutesButton", new vec3(0, 0, 0.1))
-    const btn = so.createComponent(Button.getTypeName()) as Button
-    btn.setVariant({theme: "SnapOS2", shape: "Round", style: "Ghost"})
-    btn.size = new vec3(d * 1.25, d * 1.25, 1) // hit area a little larger than the drawn button
-    enlargeHitArea(btn)
-    const ec = so.createComponent(ElementContent.getTypeName()) as ElementContent
-    ec.leadingIcon = ICON_ROUTES
-    ec.iconLayout = "left"
-    ec.leadingIconSize = d * 0.5
-    this.toggleContent = ec
-    this.tintToggleIcon(false)
-    // Small glass label next to the button (right side), fades in for TIP_SECONDS when toggled
-    const tipH = rowHeight("Label", D) + SPACE.xs * k
-    const tipW = d * 2.1
-    const tip = obj(root, "AllRoutesTip", new vec3(d / 2 + SPACE.xs * k + tipW / 2, 0, 0.2))
-    const tg = glassPanel(tip, "AllRoutesTipGlass", new vec2(tipW, tipH), {radiusCm: tipH / 2, tint: GLASS_READABLE})
-    this.tipGlass = tg.rect
-    const tc = obj(tip, "Content", new vec3(0, 0, 0.6))
-    const tcol = makeFlex(tc, "Column", FlexDirection.Column, tipW, tipH, {justify: FlexJustify.Center, align: FlexAlign.Center})
-    this.tipText = addTextRow(tcol.so, tcol.flex, "TipText", "All routes", "Label", tipW, rowHeight("Label", D), TEXT.primary, D)
-    tip.getTransform().setLocalScale(vec3.zero())
-    this.tipRoot = tip
-    btn.onTriggerUp.add(() => {
-      this.setAllRoutesOn(!this.allRoutesOn)
-      this._onAllRoutes.invoke(this.allRoutesOn)
-      this.tipT = TIP_SECONDS
-      this.applyTip()
-      tip.getTransform().setLocalScale(vec3.one())
-    })
-    btn.onHoverEnter.add(() => { this.hovered++; disc.setHover(true) })
-    btn.onHoverExit.add(() => { this.hovered = Math.max(0, this.hovered - 1); disc.setHover(false) })
-    this.toggleBtn = btn
-  }
-
-  /** First-use hint: a small glass tip in the All routes button's row, left of it (lower part of the view). */
-  buildHint(): void {
-    if (this.hintRoot) return
-    const D = this.distanceCm
-    const k = D / 110
-    const d = this.buttonWidthCm * 0.7 // same size as the All routes button
-    const panel = this.sceneObject.getChild(0)
-    const root = obj(panel, "FirstUseHintRoot", new vec3(0, this.menuHeightCm / 2 + 1 + d / 2, 0))
-    const tipH = rowHeight("Label", D) + SPACE.s * k
-    const tipW = d * 3.4
-    const hint = obj(root, "FirstUseHint", new vec3(-(d / 2 + 1 + tipW / 2), 0, 0.2))
-    glassPanel(hint, "HintGlass", new vec2(tipW, tipH), {radiusCm: tipH / 2, tint: GLASS_READABLE})
-    const hc = obj(hint, "Content", new vec3(0, 0, 0.6))
-    const hcol = makeFlex(hc, "Column", FlexDirection.Column, tipW, tipH, {justify: FlexJustify.Center, align: FlexAlign.Center})
-    this.hintText = addTextRow(hcol.so, hcol.flex, "HintText", HINT_STEPS[0], "Label", tipW * 0.92, rowHeight("Label", D), TEXT.primary, D)
-    this.hintRoot = hint
-    hint.getTransform().setLocalScale(vec3.zero())
+    if (this.accents[i]) this.accents[i].getSceneObject().getTransform().setLocalScale(on ? vec3.one() : vec3.zero())
+    if (this.labelTexts[i]) this.labelTexts[i].textFill.color = TEXT.primary // the label sits on the frosted bar below the disc, so it stays white
+    if (this.contents[i]) this.tintIcon(this.contents[i], on)
   }
 
   /** White icon normally; dark slate on the solid white (active) disc. */
@@ -293,11 +168,7 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     ecAny._inactiveIconTint = c
     ec.markColorsDirty()
   }
-  private tintToggleIcon(on: boolean): void {
-    if (this.toggleContent) this.tintIcon(this.toggleContent, on)
-  }
-
-  /** Cluster of three round glass buttons (round 2 #7): active = accent blue, the rest pale frosted gray. */
+  /** Cluster of three round toggle buttons: lit = solid white disc, the rest quiet frosted discs. */
   private build(): void {
     const D = this.distanceCm
     const k = D / 110
@@ -313,9 +184,9 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     glassSurface(panel, "MenuBarGlass", new vec2(pillW, pillH), {radiusCm: Math.min(pillW, pillH) / 2})
     const content = obj(panel, "Content", new vec3(0, 0, 0.6))
     const row = makeFlex(content, "Row", FlexDirection.Row, pillW, pillH, {gap: SPACE.l * k, justify: FlexJustify.Center, align: FlexAlign.Center})
-    const icons = [ICON_SKY, ICON_RADAR, ICON_HANGAR]
-    const names = ["Sky", "Radar", "Hangar"]
-    const events = [this._onSky, this._onRadar, this._onHangar]
+    const icons = [ICON_ROUTES, ICON_RADAR, ICON_HANGAR]
+    const names = ["Routes", "Radar", "Hangar"]
+    const events = [this._onAllRoutes, this._onRadar, this._onHangar]
     for (let i = 0; i < 3; i++) {
       const col = makeFlex(row.so, "MenuItem_" + names[i], FlexDirection.Column, B, colH, {gap: SPACE.xs * k, justify: FlexJustify.Center, align: FlexAlign.Center})
       addFlexChild(col.so, row.flex, B, colH)
@@ -349,19 +220,12 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
       ec.markColorsDirty()
       const ev = events[i]
       btn.onTriggerUp.add(() => ev.invoke())
-      if (i === 0) {
-        btn.onTriggerUp.add(() => {
-          const now = getTime()
-          if (now - this.lastSkyTap < DOUBLE_TAP_SECONDS) { this.lastSkyTap = -10; this.showHint() } else this.lastSkyTap = now
-        })
-      }
       btn.onHoverEnter.add(() => { this.hovered++; disc.setHover(true) })
       btn.onHoverExit.add(() => { this.hovered = Math.max(0, this.hovered - 1); disc.setHover(false) })
       this.buttons.push(btn)
       this.contents.push(ec)
-      this.labelTexts.push(addTextRow(col.so, col.flex, "MenuLabel_" + names[i], this.labels[i] ?? names[i], "HeadlineXL", B * 1.4, labelH, TEXT.primary, D))
+      this.labelTexts.push(addTextRow(col.so, col.flex, "MenuLabel_" + names[i], names[i], "HeadlineXL", B * 1.4, labelH, TEXT.primary, D))
     }
-    this.buildAllRoutesToggle(panel, pillH, D, k)
   }
 
   private update(): void {
@@ -372,23 +236,6 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
       this.setActiveMode(this.mode)
     }
     const dt = getDeltaTime()
-    if (!this.hintStarted && this.frames > 6 && this.hintRoot) {
-      this.hintStarted = true
-      this.showHint()
-    }
-    if (this.hintStep >= 0) {
-      this.hintT += dt
-      if (this.hintT >= HINT_STEP_SECONDS) {
-        this.hintT = 0
-        if (this.hintStep + 1 >= HINT_STEPS.length) this.dismissHint()
-        else { this.hintStep++; this.applyHint() }
-      }
-    }
-    if (this.tipT > 0) {
-      this.tipT -= dt
-      if (this.tipT <= 0 && this.tipRoot) this.tipRoot.getTransform().setLocalScale(vec3.zero())
-      else this.applyTip()
-    }
     const ct = this.cameraObject.getTransform()
     const camPos = ct.getWorldPosition()
     const camRot = ct.getWorldRotation()
@@ -431,8 +278,6 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
       this.lastOpacity = op
       for (const btn of this.buttons) btn.opacity = op
       for (const c of this.contents) c.opacity = Math.max(op, GLYPH_MIN_OPACITY) // glyphs stay legible while the bar is dim
-      if (this.toggleBtn) this.toggleBtn.opacity = op
-      if (this.toggleContent) this.toggleContent.opacity = Math.max(op, GLYPH_MIN_OPACITY)
     }
   }
 }

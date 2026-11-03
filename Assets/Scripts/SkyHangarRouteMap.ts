@@ -10,7 +10,7 @@
 
 import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
 import {AIRPORTS, SNAPSHOT_UTC, SkyObjectInfo} from "./SkyHangarFlightData"
-import {FONT, PALETTE, TEXT, obj, roleSize} from "./SkyHangarSharedUI"
+import {fontFor, PALETTE, TEXT, obj, roleSize} from "./SkyHangarSharedUI"
 import {heliTrack} from "./SkyHangarRouteGeo"
 
 const COAST = requireAsset("../Data/coastline.json") as JsonAsset
@@ -267,10 +267,9 @@ export class RouteMap {
       const so = obj(root, nm, new vec3(0, 0, 0.2))
       const t = so.createComponent("Component.Text") as Text
       t.text = ""
-      t.font = FONT
+      t.font = fontFor(600)
       t.depthTest = true
       t.size = roleSize("Body", D)
-      ;(t as Text & {weight?: number}).weight = 600
       t.textFill.color = TEXT.primary
       t.horizontalAlignment = HorizontalAlignment.Center
       t.verticalAlignment = VerticalAlignment.Center

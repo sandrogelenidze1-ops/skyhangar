@@ -5,8 +5,8 @@
 // Public API: setTrailLabels(...), hideTrailLabels(), setArrowLabel(...), showCollectedStamp(pos),
 // plus getters for tests. Passive view — positions and strings come from the main script.
 
-import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
-import {GLASS_READABLE, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, glassPanel, makeFlex, obj, rowHeight, UI_RENDER_ORDER, setRenderOrderTree, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
+import {RoundedRectangle, RoundedRectBlendMode} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
+import {GLASS_READABLE, GLASS, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, fontFor, opticalLiftCm, glassPanel, glassSurface, makeFlex, obj, roleHeightCm, rowHeight, UI_RENDER_ORDER, setRenderOrderTree, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
 
 interface Label {
   root: SceneObject
@@ -41,7 +41,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   stampColor: vec4 = new vec4(0.45, 1.0, 0.6, 1)
   @input
   @hint("Collected stamp text")
-  stampText: string = "COLLECTED"
+  stampText: string = "Collected"
   @input
   @hint("Seconds the Collected stamp stays up")
   @widget(new SliderWidget(0.5, 5, 0.1))
@@ -93,7 +93,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     this.origin = this.makeLabel("TrailOriginLabel", 400, "LHR", "London", TEXT.primary, 12, true, GLASS_READABLE)
     this.dest = this.makeLabel("TrailDestLabel", 400, "CUN", "Cancún", TEXT.primary, 12, true, GLASS_READABLE)
     this.arrow = this.makeLabel("EdgeArrowLabel", 80, "Swiss International Air Lines LX29K", null, this.arrowLabelTint, 36)
-    this.stamp = this.makeLabel("CollectedStamp", 60, this.stampText, "Ealing, London", this.stampColor, 22, true)
+    this.stamp = this.makeStamp(60, this.stampText, "Ealing, London", 22)
     this.reticle = this.makeReticleLabel()
     for (let i = 0; i < 4; i++) this.radarLabels.push(this.makeLabel("RadarRangeLabel_" + i, 100, "20 km", null, this.padLabelColor, 8))
     this.hangarPadLabel = this.makeLabel("HangarPadLabel", 60, this.hangarPadText, null, this.padLabelColor, 12, true)
@@ -279,6 +279,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
 
   showCollectedStamp(worldPos: vec3, caption: string): void {
     if (this.stamp.small) this.stamp.small.text = caption
+    this.setAlpha(this.stamp, 0)
     this.place(this.stamp, worldPos)
     this.stampT = 0
   }
@@ -305,6 +306,60 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     return {root, big: this.reticleRows[0], small: this.reticleRows[2], visible: false, distance: D}
   }
 
+  /** "Collected" toast: frosted glass pill, small line check + medium-weight white title, quieter detail line (flight, date). */
+  private makeStamp(distance: number, title: string, caption: string, widthAt110: number): Label {
+    const k = distance / 110
+    const w = widthAt110 * k
+    const titleH = rowHeight("Title", distance)
+    const capH = rowHeight("Label", distance)
+    const h = titleH + capH + 1.0 * k
+    const root = obj(this.sceneObject, "CollectedStamp")
+    glassSurface(root, "CollectedStampGlass", new vec2(w, h), {radiusCm: h / 2, glow: false})
+    const content = obj(root, "Content", new vec3(0, 0, 0.6))
+    const mkText = (name: string, text: string, role: "Title" | "Label", weight: number, color: vec4, cx: number, cy: number, tw: number, th: number, align: HorizontalAlignment): Text => {
+      const so = obj(content, name, new vec3(0, cy, 0))
+      const t = so.createComponent("Component.Text") as Text
+      t.text = text
+      t.depthTest = true
+      applyTextRole(t, role, distance)
+      t.font = fontFor(weight)
+      t.textFill.color = color
+      t.horizontalAlignment = align
+      t.verticalAlignment = VerticalAlignment.Center
+      t.horizontalOverflow = HorizontalOverflow.Shrink
+      t.verticalOverflow = VerticalOverflow.Overflow
+      const lift = opticalLiftCm(text, t.size)
+      t.layoutRect = Rect.create(cx - tw / 2, cx + tw / 2, -th / 2 + lift, th / 2 + lift)
+      return t
+    }
+    const label = title.charAt(0).toUpperCase() + title.slice(1).toLowerCase()
+    const em = roleHeightCm("Title", distance)
+    const iconS = em * 0.8
+    const gap = em * 0.4
+    const textW = em * 5.6
+    const x0 = -(iconS + gap + textW) / 2
+    const cy = capH / 2 // the title row sits above the caption row
+    const big = mkText("Title", label, "Title", 500, new vec4(1, 1, 1, 1), x0 + iconS + gap + textW / 2, cy, textW, titleH, HorizontalAlignment.Left)
+    const small = mkText("Caption", caption, "Label", 400, new vec4(1, 1, 1, 0.72), 0, -titleH / 2, w * 0.92, capH, HorizontalAlignment.Center)
+    // Line check (round-capped 2 px strokes): two segments through A -> B -> C
+    const cx = x0 + iconS / 2
+    const pts = [new vec2(cx - 0.38 * iconS, cy + 0.0), new vec2(cx - 0.1 * iconS, cy - 0.3 * iconS), new vec2(cx + 0.4 * iconS, cy + 0.3 * iconS)]
+    const th = Math.max(0.12, em * 0.1)
+    for (let i = 0; i < 2; i++) {
+      const a = pts[i], b = pts[i + 1]
+      const so = obj(content, "Check" + i, new vec3((a.x + b.x) / 2, (a.y + b.y) / 2, 0))
+      const r = so.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+      r.initialize()
+      r.blendMode = RoundedRectBlendMode.Normal
+      r.size = new vec2(Math.hypot(b.x - a.x, b.y - a.y) + th, th)
+      r.cornerRadius = th / 2
+      r.backgroundColor = new vec4(1, 1, 1, 0.95)
+      so.getTransform().setLocalRotation(quat.angleAxis(Math.atan2(b.y - a.y, b.x - a.x), vec3.forward()))
+    }
+    root.getTransform().setLocalScale(vec3.zero())
+    return {root, big, small, visible: false, distance}
+  }
+
   private makeLabel(name: string, distance: number, big: string, small: string | null, color: vec4, widthAt110: number, plate: boolean = false, plateTint?: vec4): Label {
     const root = obj(this.sceneObject, name)
     const k = distance / 110
@@ -326,7 +381,8 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
       t.verticalAlignment = VerticalAlignment.Center
       t.horizontalOverflow = HorizontalOverflow.Shrink
       t.verticalOverflow = VerticalOverflow.Overflow
-      t.layoutRect = Rect.create(-tw / 2, tw / 2, -h / 2, h / 2)
+      const lift = opticalLiftCm(big, t.size)
+      t.layoutRect = Rect.create(-tw / 2, tw / 2, -h / 2 + lift, h / 2 + lift)
       root.getTransform().setLocalScale(vec3.zero())
       return {root, big: t, small: null, visible: false, distance}
     }
@@ -379,7 +435,11 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     if (this.arrow.visible) l2(this.arrow.root, camRot)
     if (this.stamp.visible) {
       this.stampT += getDeltaTime()
-      const pop = this.stampT < 0.25 ? 0.6 + 1.8 * this.stampT : 1.05 - Math.min(0.05, (this.stampT - 0.25) * 0.2)
+      // Fade + scale 94% -> 100% over 0.25 s, hold, then fade out over the last 0.3 s
+      const inT = Math.min(1, this.stampT / 0.25)
+      const ease = 1 - (1 - inT) * (1 - inT)
+      const pop = 0.94 + 0.06 * ease
+      this.setAlpha(this.stamp, ease * Math.max(0, Math.min(1, (this.stampSeconds - this.stampT) / 0.3)))
       this.stamp.root.getTransform().setLocalScale(new vec3(pop, pop, pop))
       if (this.stampT > this.stampSeconds) this.hideLabel(this.stamp)
     }

@@ -6457,19 +6457,6 @@
   ],
   "assets": [
     {
-      "id": "acdb17e0-1480-4c1a-9f4b-3cbb17a78acc",
-      "name": "Space Grotesk",
-      "type": "Font",
-      "path": "Fonts/Space Grotesk.ttf",
-      "properties": {
-        "isVariableFont": false,
-        "name": "Space Grotesk",
-        "fileMeta.id": "b6c0c3df-8003-40fa-a12b-1d14d077748e",
-        "id": "acdb17e0-1480-4c1a-9f4b-3cbb17a78acc",
-        "type": "Font"
-      }
-    },
-    {
       "id": "405d384e-9453-43b6-9f86-36d73c07c1a6",
       "name": "Loader",
       "type": "Material",

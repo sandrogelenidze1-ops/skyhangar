@@ -9,10 +9,11 @@
 
 import {Button} from "SpectaclesUIKit.lspkg/Scripts/Components/Button/Button"
 import {ElementContent} from "SpectaclesUIKit.lspkg/Scripts/Components/Content/ElementContent"
+import {RoundedRectangle, RoundedRectBlendMode} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
 import {FlexLayout} from "SpectaclesUIKit.lspkg/Scripts/Components/Layout2D/Flex/FlexLayout"
 import Event, {PublicApi} from "SpectaclesInteractionKit.lspkg/Utils/Event"
 import {
-  GLASS, glassSurface, PALETTE, applyFontToContent, RADIUS, SPACE, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
+  GLASS, glassSurface, fontFor, FONT_METRICS, emCm, opticalLiftCm, chevronLiftCm, liftContent, textWidthEm, PALETTE, applyFontToContent, applyFontToContentWeight, applyTextRole, RADIUS, SPACE, addFlexChild, enlargeHitArea, addTextRow, glassPanel, makeFlex, obj, roleSize, rowHeight, FlexDirection, FlexJustify, FlexAlign
 } from "./SkyHangarSharedUI"
 
 interface Tag {
@@ -45,6 +46,11 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   private titleRoot!: SceneObject
   private counter!: Text
   private dots!: Text
+  private titleContent!: SceneObject
+  private titleL!: Text
+  private titleR!: Text
+  private titleDot!: RoundedRectangle
+  private pageDots: RoundedRectangle[] = []
   private sortContent!: ElementContent
   private sortLabel = "Recent"
   private headers: {root: SceneObject; text: Text; shown: string}[] = []
@@ -68,6 +74,64 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const content = obj(root, "Content", new vec3(0, 0, 0.6))
     const col = makeFlex(content, "Column", FlexDirection.Column, w, h, {justify: FlexJustify.Center, align: FlexAlign.Center})
     this.title = addTextRow(col.so, col.flex, "TitleText", "My Hangar · 12 models", "Headline", w - 2, rowHeight("Headline", D), PALETTE.text, D)
+    // The visible title is drawn from three parts (left text, a round dot, right text) so the separator is a true circle
+    // centred on the x-height with equal gaps; this.title keeps the plain string (invisible) for the API.
+    this.title.textFill.color = new vec4(1, 1, 1, 0)
+    this.titleContent = content
+    const mk = (name: string, align: HorizontalAlignment): Text => {
+      const so = obj(content, name, new vec3(0, 0, 0))
+      const t = so.createComponent("Component.Text") as Text
+      applyTextRole(t, "Headline", D)
+      t.depthTest = true
+      t.textFill.color = PALETTE.text
+      t.horizontalAlignment = align
+      t.verticalAlignment = VerticalAlignment.Center
+      t.horizontalOverflow = HorizontalOverflow.Overflow
+      t.verticalOverflow = VerticalOverflow.Overflow
+      return t
+    }
+    this.titleL = mk("TitleLeft", HorizontalAlignment.Right)
+    this.titleR = mk("TitleRight", HorizontalAlignment.Left)
+    const dot = obj(content, "TitleDot", new vec3(0, 0, 0))
+    this.titleDot = dot.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+    this.titleDot.initialize()
+    this.titleDot.blendMode = RoundedRectBlendMode.Normal
+    this.titleDot.backgroundColor = PALETTE.text
+    this.layoutTitle("My Hangar · 12 models", w)
+  }
+
+  /** Places "left · right" around a round dot: equal gaps, dot centred on the x-height, whole run centred on the pill. */
+  private layoutTitle(text: string, wCm: number): void {
+    const cut = text.indexOf(" · ")
+    const left = cut >= 0 ? text.substring(0, cut) : text
+    const right = cut >= 0 ? text.substring(cut + 3) : ""
+    const size = this.titleL.size
+    const em = emCm(size)
+    const g = 0.3 * em
+    const d = 0.26 * em // about 2.2x the old middle dot
+    const wA = textWidthEm(left) * em
+    const wB = textWidthEm(right) * em
+    const total = cut >= 0 ? wA + g * 2 + d + wB : wA
+    const dotX = cut >= 0 ? -total / 2 + wA + g + d / 2 : 0
+    const hh = rowHeight("Headline", this.readDistanceCm)
+    const set = (t: Text, s: string, x0: number, x1: number): void => {
+      t.text = s
+      const lift = opticalLiftCm(text, size)
+      t.layoutRect = Rect.create(x0, x1, -hh / 2 + lift, hh / 2 + lift)
+    }
+    if (cut >= 0) {
+      set(this.titleL, left, dotX - d / 2 - g - wCm, dotX - d / 2 - g)
+      set(this.titleR, right, dotX + d / 2 + g, dotX + d / 2 + g + wCm)
+    } else {
+      set(this.titleL, left, -wCm / 2, wCm / 2)
+      this.titleL.horizontalAlignment = HorizontalAlignment.Center
+      this.titleR.text = ""
+    }
+    const xCentreBelow = ((FONT_METRICS.cap + FONT_METRICS.xHeight) / 4 - FONT_METRICS.xHeight / 2) * em // x-height centre sits below the optical centre
+    this.titleDot.size = new vec2(d, d)
+    this.titleDot.cornerRadius = d / 2
+    this.titleDot.getSceneObject().getTransform().setLocalPosition(new vec3(dotX, -xCentreBelow, 0))
+    this.titleDot.getSceneObject().getTransform().setLocalScale(cut >= 0 ? vec3.one() : vec3.zero())
   }
 
   // ---------- public API ----------
@@ -109,7 +173,10 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
   }
 
   setTitle(text: string, localPos?: vec3): void {
-    if (this.title) this.title.text = text
+    if (this.title) {
+      this.title.text = text
+      this.layoutTitle(text, 34 * (this.readDistanceCm / 110))
+    }
     if (this.titleRoot && localPos) this.titleRoot.getTransform().setLocalPosition(localPos)
   }
 
@@ -167,6 +234,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
       let s = ""
       for (let i = 0; i < pageCount; i++) s += (i === page ? "●" : "○") + (i < pageCount - 1 ? " " : "")
       this.dots.text = s
+      this.layoutPageDots(page, pageCount)
     }
     this.sortLabel = sortLabel
     if (this.sortContent) this.sortContent.text = "Sort: " + sortLabel
@@ -188,7 +256,7 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const t1 = addTextRow(col.so, col.flex, "TagHead", "VS93", "Headline", inner, rowHeight("Headline", D), white, D)
     const t2 = addTextRow(col.so, col.flex, "TagRoute", "LHR → CUN", "Body", inner, rowHeight("Body", D), white, D)
     const t3 = addTextRow(col.so, col.flex, "TagAirline", "VIRGIN ATLANTIC AIRWAYS", "Label", inner, rowHeight("Label", D), white, D)
-    ;(t2 as Text & {weight?: number}).weight = 600 // the Body role is lighter than the rest; match the other lines
+    t2.font = fontFor(600) // the Body role is lighter than the rest; match the other lines
     const t4 = addTextRow(col.so, col.flex, "TagMeta", "Ealing, London · 28 Oct 17:54", "Label", inner, rowHeight("Label", D), white, D)
     root.getTransform().setLocalScale(vec3.zero())
     return {root, texts: [t1, t2, t3, t4], shown: -1}
@@ -220,18 +288,50 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     const row = makeFlex(content, "Row", FlexDirection.Row, w, h + SPACE.s * k * 2, {gap: SPACE.m * k, justify: FlexJustify.Center, align: FlexAlign.Center})
     this.makeButton(row.so, row.flex, "ShelfPrevButton", "‹", h, h, () => this._onPrev.invoke(), "Round")
     this.dots = addTextRow(row.so, row.flex, "PageDots", "● ○ ○", "Body", 8 * k, h, PALETTE.accent, D)
+    this.dots.textFill.color = new vec4(1, 1, 1, 0) // text keeps the API/layout slot; the dots are drawn as round shapes
     this.counter = addTextRow(row.so, row.flex, "PageCounter", "6–10 of 24", "Body", 11 * k, h, PALETTE.text, D)
     this.makeButton(row.so, row.flex, "ShelfNextButton", "›", h, h, () => this._onNext.invoke(), "Round")
     this.sortContent = this.makeButton(row.so, row.flex, "ShelfSortButton", "Sort: Recent", 13 * k, h, () => this._onSortToggle.invoke(), "Capsule")
   }
 
+  /** Page dots as round shapes centred in their slot (filled = current page, ring = other pages). */
+  private layoutPageDots(page: number, pageCount: number): void {
+    const slot = this.dots.getSceneObject()
+    const dia = 0.45 * emCm(this.dots.size)
+    const pitch = dia * 2
+    while (this.pageDots.length < pageCount) {
+      const so = obj(slot, "PageDot_" + this.pageDots.length, new vec3(0, 0, 0))
+      const r = so.createComponent(RoundedRectangle.getTypeName()) as RoundedRectangle
+      r.initialize()
+      r.blendMode = RoundedRectBlendMode.Normal
+      this.pageDots.push(r)
+    }
+    for (let i = 0; i < this.pageDots.length; i++) {
+      const r = this.pageDots[i]
+      const t = r.getSceneObject().getTransform()
+      if (i >= pageCount) { t.setLocalScale(vec3.zero()); continue }
+      t.setLocalScale(vec3.one())
+      t.setLocalPosition(new vec3((i - (pageCount - 1) / 2) * pitch, 0, 0))
+      r.size = new vec2(dia, dia)
+      r.cornerRadius = dia / 2
+      const on = i === page
+      r.backgroundColor = on ? PALETTE.accent : new vec4(PALETTE.accent.x, PALETTE.accent.y, PALETTE.accent.z, 0)
+      r.border = !on
+      if (!on) {
+        r.borderSize = 0.07
+        r.borderColor = PALETTE.accent
+      }
+    }
+  }
+
   private makeButton(parent: SceneObject, flex: FlexLayout, name: string, label: string, w: number, h: number, onTap: () => void, shape: string): ElementContent {
-    const so = obj(parent, name, new vec3(0, 0, 0.02))
+    const holder = obj(parent, name + "Holder", new vec3(0, 0, 0.02))
+    const so = obj(holder, name, new vec3(0, 0, 0.4))
     const btn = so.createComponent(Button.getTypeName()) as Button
     btn.setVariant({theme: "SnapOS2", shape: shape, style: "Ghost"}) // transparent fill: the frosted disc below carries the look
     btn.size = new vec3(w, h, 1)
-    const glass = glassSurface(so, name + "Glass", new vec2(w, h), {radiusCm: h, fill: 0.67, rim: 0.7})
-    glass.so.getTransform().setLocalPosition(new vec3(0, 0, -0.05))
+    const glass = glassSurface(holder, name + "Glass", new vec2(w, h), {radiusCm: h, fill: 1.5, rim: 1, rimCm: 0.14, glow: false}) // brighter than the pill: white ~32%, rim ~2 px
+    glass.so.getTransform().setLocalPosition(new vec3(0, 0, 0.8))
     btn.onHoverEnter.add(() => glass.setHover(true))
     btn.onHoverExit.add(() => glass.setHover(false))
     const ec = so.createComponent(ElementContent.getTypeName()) as ElementContent
@@ -243,10 +343,13 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
     ecAny._hoveredTextColor = white
     ecAny._triggeredTextColor = white
     ec.text = label
-    ec.textSize = roleSize(label.length <= 1 ? "Headline" : "Button", this.readDistanceCm)
+    const chevron = label.length <= 1
+    ec.textSize = roleSize(chevron ? "Headline" : "Button", this.readDistanceCm) * (chevron ? 1.6 : 1) // chevrons 60% bigger, SemiBold for a thicker stroke
+    if (chevron) applyFontToContentWeight(ec, 600)
+    liftContent(ec, chevron ? chevronLiftCm(ec.textSize) : opticalLiftCm(label, ec.textSize))
     btn.onTriggerUp.add(() => onTap())
     enlargeHitArea(btn)
-    addFlexChild(so, flex, w, h)
+    addFlexChild(holder, flex, w, h)
     return ec
   }
 }
