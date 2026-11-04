@@ -25,7 +25,10 @@ export class SH_M7_Variety extends Scenario {
     print("[SH-TEST] hangar shelf family counts on first open: " + JSON.stringify(shelf))
     const missing = AIRLINERS.concat(HELIS, SATS).filter((f) => !shelf[f])
     c.check(`hangar shelf has every family (missing: ${missing.join(",") || "none"})`, "inspection", missing.length === 0)
-    c.check("no invented airline on example models", "inspection", main.shelf.getEntries().filter((e) => e.info.id.indexOf("EX_") === 0).every((e) => e.info.airlineIcao === "" && e.info.registration === ""))
+    const ex = main.shelf.getEntries().filter((e) => e.info.id.indexOf("EX_") === 0)
+    const fictional = ["Meridian Air", "Solace Airways", "Kestrel Air", "Arcadia Airlines", "Halcyon Air", "Vireo Airways", "Cobalt Air", "Lumen Airways", "Ridgeway Air Rescue", "Coastline Helicopters", "Northwind Aviation", "Tern Air Services", "Orbis Labs", "Nimbus Orbital", "Aster Space", "Polaris Orbital"]
+    c.check("example models use fictional operators and no 'Example model' text", "inspection", ex.length > 0 && ex.every((e) => fictional.indexOf(e.info.airline) >= 0 && e.info.flight.toLowerCase().indexOf("example") < 0 && e.where.toLowerCase().indexOf("example") < 0))
+    c.check("example planes have a real IATA route and every example has a 'DD Mon HH:MM' date", "inspection", ex.every((e) => /^\d{1,2} [A-Z][a-z]{2} \d\d:\d\d$/.test(e.when) && (e.info.kind !== "plane" || (/^[A-Z]{3}$/.test(e.info.origin) && /^[A-Z]{3}$/.test(e.info.destination) && e.info.origin !== e.info.destination))))
     c.finish()
   }
 }

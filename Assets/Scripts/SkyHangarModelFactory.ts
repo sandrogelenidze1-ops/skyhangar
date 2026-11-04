@@ -299,7 +299,7 @@ export function modelMaterial(kit: PartKit, style: ModelStyle, palette?: vec4[] 
 // Fleet examples: one real-type example per family, so the Hangar can show the whole fleet
 // ---------------------------------------------------------------------------------------------------------------
 
-/** One example per family: a real ICAO type of that family and its real name. Labelled as an example model, never as a flight. */
+/** One example per family: a real ICAO type of that family and its real name. */
 const FLEET: {kind: SkyKind; type: string; name: string}[] = [
   {kind: "plane", type: "A320", name: "Airbus A320"},
   {kind: "plane", type: "B788", name: "Boeing 787-8"},
@@ -321,20 +321,76 @@ const FLEET: {kind: SkyKind; type: string; name: string}[] = [
   {kind: "satellite", type: "ISS", name: "Space station"}
 ]
 
-/** Example models for every family not in `have` (family of an entry already on the shelf). No airline, route or registration is invented. */
-export function fleetExamples(have: {[family: string]: boolean}): SkyObjectInfo[] {
-  const out: SkyObjectInfo[] = []
+/** Fictional carriers (name, two-letter callsign prefix, three-letter code): invented, no real airline. */
+const FICTIONAL_AIRLINES: {name: string; pre: string; icao: string}[] = [
+  {name: "Meridian Air", pre: "MR", icao: "MQA"}, {name: "Solace Airways", pre: "SL", icao: "SQW"}, {name: "Kestrel Air", pre: "KS", icao: "KQS"},
+  {name: "Arcadia Airlines", pre: "AD", icao: "AQD"}, {name: "Halcyon Air", pre: "HC", icao: "HQC"}, {name: "Vireo Airways", pre: "VW", icao: "VQW"},
+  {name: "Cobalt Air", pre: "CB", icao: "CQB"}, {name: "Lumen Airways", pre: "LM", icao: "LQM"}
+]
+/** Fictional helicopter operators with an operator-style callsign prefix. */
+const FICTIONAL_HELI_OPS: {name: string; pre: string}[] = [
+  {name: "Ridgeway Air Rescue", pre: "RW"}, {name: "Coastline Helicopters", pre: "CL"}, {name: "Northwind Aviation", pre: "NW"}, {name: "Tern Air Services", pre: "TN"}
+]
+/** Fictional satellite operators with an operator-style ID prefix. */
+const FICTIONAL_SAT_OPS: {name: string; pre: string}[] = [
+  {name: "Orbis Labs", pre: "OLB"}, {name: "Nimbus Orbital", pre: "NMB"}, {name: "Aster Space", pre: "AST"}, {name: "Polaris Orbital", pre: "PLR"}
+]
+/** Twenty real cities with their main IATA airport. */
+export const SEED_CITIES: {city: string; iata: string}[] = [
+  {city: "London", iata: "LHR"}, {city: "Paris", iata: "CDG"}, {city: "Madrid", iata: "MAD"}, {city: "Rome", iata: "FCO"}, {city: "Berlin", iata: "BER"},
+  {city: "Amsterdam", iata: "AMS"}, {city: "Dublin", iata: "DUB"}, {city: "Lisbon", iata: "LIS"}, {city: "Vienna", iata: "VIE"}, {city: "Zurich", iata: "ZRH"},
+  {city: "Copenhagen", iata: "CPH"}, {city: "Oslo", iata: "OSL"}, {city: "Stockholm", iata: "ARN"}, {city: "Athens", iata: "ATH"}, {city: "Istanbul", iata: "IST"},
+  {city: "Dubai", iata: "DXB"}, {city: "New York", iata: "JFK"}, {city: "Toronto", iata: "YYZ"}, {city: "Singapore", iata: "SIN"}, {city: "Tokyo", iata: "HND"}
+]
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/** A seeded Hangar item: the info plus where / when it was "collected" (the last two card lines). */
+export interface SeededItem {info: SkyObjectInfo; where: string; when: string; atMs: number}
+
+/**
+ * Example models for every family not in `have`, as complete Hangar items: made-up callsign, route between two real cities (IATA codes), fictional
+ * airline / operator, and "City · DD Mon HH:MM" inside the last 14 days. Everything is hashed from the type, so the same example always gets the same card;
+ * `now` only anchors the dates. Items come back oldest first.
+ */
+export function fleetExamples(have: {[family: string]: boolean}, now: Date = new Date()): SeededItem[] {
+  const out: SeededItem[] = []
   for (const f of FLEET) {
     const fam = modelFamilyFor(f.kind, f.type, "EX_" + f.type)
     if (have[fam]) continue
     have[fam] = true
+    const h = (k: string) => mixHash(f.type + "#" + k)
+    const num = 1000 + (h("num") % 9000)
+    const place = SEED_CITIES[h("place") % SEED_CITIES.length]
+    const o = SEED_CITIES[h("from") % SEED_CITIES.length]
+    let d = SEED_CITIES[h("to") % SEED_CITIES.length]
+    if (d.iata === o.iata) d = SEED_CITIES[(h("to") + 7) % SEED_CITIES.length]
+    const at = new Date(now.getTime() - (1 + (h("day") % 14)) * 86400000)
+    at.setHours(h("hour") % 24, h("min") % 60, 0, 0)
+    const pad = (n: number) => (n < 10 ? "0" : "") + n
+    const when = at.getDate() + " " + MONTHS[at.getMonth()] + " " + pad(at.getHours()) + ":" + pad(at.getMinutes())
+    let airline: string, airlineIcao: string, flight: string, registration = ""
+    if (f.kind === "plane") {
+      const a = FICTIONAL_AIRLINES[h("airline") % FICTIONAL_AIRLINES.length]
+      airline = a.name; airlineIcao = a.icao; flight = a.pre + " " + num
+    } else if (f.kind === "helicopter") {
+      const a = FICTIONAL_HELI_OPS[h("airline") % FICTIONAL_HELI_OPS.length]
+      airline = a.name; airlineIcao = ""; flight = a.pre + " " + (num % 900 + 100); registration = a.pre + "-" + (num % 90 + 10)
+    } else {
+      const a = FICTIONAL_SAT_OPS[h("airline") % FICTIONAL_SAT_OPS.length]
+      airline = a.name; airlineIcao = ""; flight = a.pre + "-" + num
+    }
+    const plane = f.kind === "plane"
     out.push({
-      id: "EX_" + f.type.replace(/\W/g, ""), kind: f.kind, callsign: f.type, flight: "Example model", airline: "Example model", airlineIcao: "",
-      origin: "", originCity: "", destination: "", destinationCity: "", departUtc: "", arriveUtc: "", aircraftType: f.type, aircraftTypeName: f.name,
-      registration: "", altitudeFt: 0, speedKt: 0, trackDeg: 0, lat: 0, lon: 0, distanceKm: 0, azimuthDeg: 0, realElevationDeg: 0, skyElevationDeg: 0,
-      skyAzimuthDeg: 0, departedAgoMin: 0, arrivingInMin: 0, skyPathPast: [], skyPathAhead: [], bearingToOriginDeg: 0, bearingToDestDeg: 0, colors: []
+      info: {
+        id: "EX_" + f.type.replace(/\W/g, ""), kind: f.kind, callsign: flight, flight, airline, airlineIcao,
+        origin: plane ? o.iata : "", originCity: plane ? o.city : "", destination: plane ? d.iata : "", destinationCity: plane ? d.city : "", departUtc: "", arriveUtc: "",
+        aircraftType: f.type, aircraftTypeName: f.name, registration, altitudeFt: 0, speedKt: 0, trackDeg: 0, lat: 0, lon: 0, distanceKm: 0, azimuthDeg: 0, realElevationDeg: 0,
+        skyElevationDeg: 0, skyAzimuthDeg: 0, departedAgoMin: 0, arrivingInMin: 0, skyPathPast: [], skyPathAhead: [], bearingToOriginDeg: 0, bearingToDestDeg: 0, colors: []
+      },
+      where: place.city, when, atMs: at.getTime()
     })
   }
+  out.sort((a, b) => a.atMs - b.atMs)
   return out
 }
 

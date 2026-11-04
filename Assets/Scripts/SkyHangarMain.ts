@@ -556,7 +556,7 @@ export class SkyHangarMain extends BaseScriptComponent {
       // Fleet examples: one real-type example of every model family not yet on the shelf, so the whole fleet is visible on first open.
       const have: {[family: string]: boolean} = {}
       for (const e of this.shelf.getEntries()) have[familyForInfo(e.info)] = true
-      for (const ex of fleetExamples(have)) this.shelf.add(ex, "Example model", "-", false)
+      for (const ex of fleetExamples(have)) this.shelf.add(ex.info, ex.where, ex.when, false)
       this.shelf.setPage(0)
       this.pushShelfView()
       this.lastCollectedText = ""
