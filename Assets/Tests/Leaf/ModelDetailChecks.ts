@@ -54,7 +54,7 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       const angs = mid.map((x) => (Math.atan2(x.c[1], Math.abs(x.c[0])) * 180) / Math.PI)
       const minA = Math.min(...angs), maxA = Math.max(...angs)
       c.check(`${fam}: window row ${minA.toFixed(1)}..${maxA.toFixed(1)} deg above midline (want ~25, not on top)`, "inspection", minA > 21 && maxA < 29)
-      // windscreen: one front band centred on x = 0 (pane 0) plus a small side window per side (panes 1, 2)
+      // windscreen: one front band centred on x = 0 (pane 0), no side windows
       const ws = geo.windscreen ?? []
       const g = geo.body
       const R = fus.D / 2
@@ -70,7 +70,7 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       } })
       const widthPct = (xMax - xMin) / fus.D * 100, topR = yMax / R, botR = yMin / R
       print(`[SH-TEST] ${fam} front band: width ${widthPct.toFixed(1)} % of fuselage width, top ${topR.toFixed(3)} R, bottom ${botR.toFixed(3)} R, max |x| ${(Math.max(-xMin, xMax) / R).toFixed(3)} R`)
-      c.check(`${fam}: front windscreen + 2 side windows present (${ws.length} panes, ${tris} tris), side windows face outward (${inward} inward)`, "inspection", ws.length === 3 && tris > 0 && inward === 0)
+      c.check(`${fam}: front windscreen present, no side cockpit windows (${ws.length} panes, ${tris} tris)`, "inspection", ws.length === 1 && tris > 0)
       c.check(`${fam}: front band centred, width ${widthPct.toFixed(1)} % >= 55 %, |x| <= 0.56 R`, "inspection", Math.abs(xMin + xMax) < 1e-6 && widthPct >= 55 && Math.max(-xMin, xMax) <= 0.56 * R)
       c.check(`${fam}: front band top ${topR.toFixed(3)} R <= 0.45 R, bottom ${botR.toFixed(2)} R >= 0.14 R`, "inspection", topR <= 0.45 && botR >= 0.14)
     }

@@ -489,7 +489,7 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
   const f2 = sideA
   // Windscreen: a WIDE, SHORT dark band across the upper nose. In the front projection it is the rectangle |x| <= 0.55 R, 0.15 R .. 0.43 R above the axis; a
   // 14 x 3 grid of points is ray cast along the forward axis onto the nose surface of revolution (r = hypot(x, y)) and pushed 0.003 out along the normal.
-  // Plus one small side window per side (0.10 D long) right behind the end of the band. One dark material, no frames, no pillar.
+  // One dark material, no frames, no pillar.
   const WS_OFF = 0.003
   const skin = (u: number, a: number, off: number): {p: V; n: V} => {
     const s0 = fusSec(u)
@@ -514,23 +514,6 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
     }
     g.grid(pts, ns, SLOT.GLASS)
     windscreen.push({tri0: t0, tri1: g.tris})
-  }
-  {
-    const uE = nose * (1 - tAtRadius(Math.hypot(0.55, 0.43))), hl = 0.10 * D
-    for (const side of [0, 1]) {
-      const t0 = g.tris
-      const pts: V[][] = [], ns: V[][] = []
-      for (let r = 0; r <= 4; r++) {
-        const u = lerp(uE, uE + hl, r / 4)
-        const rv = fusSec(u).rv
-        const aLo = Math.asin(Math.min(1, 0.16 * R / rv)), aHi = Math.asin(Math.min(1, 0.34 * R / rv))
-        const pr: V[] = [], nr: V[] = []
-        for (let c = 0; c <= 2; c++) { const q = skin(u, sideA(side, lerp(aLo, aHi, c / 2)), WS_OFF); pr.push(q.p); nr.push(q.n) }
-        pts.push(pr); ns.push(nr)
-      }
-      g.grid(pts, ns, SLOT.GLASS)
-      windscreen.push({tri0: t0, tri1: g.tris})
-    }
   }
   // passenger windows: small round dark discs 1 mm-ish proud, one row per side, 25 deg above the midline, 0.14 L .. 0.80 L from the nose
   const WIN_A = 25 * DEG2
