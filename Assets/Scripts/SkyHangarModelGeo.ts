@@ -502,7 +502,7 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
     const t0 = g.tris
     const pts: V[][] = [], ns: V[][] = [], rows = 3, cols = 14
     for (let r = 0; r <= rows; r++) {
-      const y = lerp(0.15, 0.43, r / rows) * R
+      const y = lerp(0.19, 0.39, r / rows) * R
       const row: V[] = [], nr: V[] = []
       for (let c = 0; c <= cols; c++) {
         const x = lerp(-0.55, 0.55, c / cols) * R
