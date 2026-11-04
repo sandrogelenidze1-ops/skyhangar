@@ -17,7 +17,7 @@ export interface BuiltGlyph {
   rotor: SceneObject | null
 }
 
-/** Airliner pictogram outline in a 100 x 100 box (y down, nose up): fuselage x 43.5-56.5 y 4-92, wings swept back, tailplane swept back. */
+/** Airliner pictogram outline in a 100 x 100 box (y down, nose up): fuselage x 43.5-56.5 y 4-92 (front 25 % tapering to a soft point), wings swept back, tailplane swept back. */
 function planeOutline(): number[][] {
   const arc = (cx: number, cy: number, rx: number, ry: number, a0: number, a1: number, n: number): number[][] => {
     const out: number[][] = []
@@ -28,7 +28,9 @@ function planeOutline(): number[][] {
     return out
   }
   const right: number[][] = [
-    ...arc(50, 10, 6.5, 6, Math.PI / 2, 0, 8), // rounded nose, right half (top at y = 4)
+    ...arc(50, 6.3, 2.3, 2.3, Math.PI / 2, 0, 5), // soft rounded tip, right half: 4.6 wide = 35 % of the 13-wide fuselage, top at y = 4
+    ...[1, 2, 3, 4, 5, 6, 7].map((i): number[] => { const s = i / 8; return [52.3 + 4.2 * (1 - Math.pow(1 - s, 1.7)), 6.3 + 19.7 * s] }), // the fuselage front 25 % (y 4..26) tapers out to full width
+    [56.5, 26],
     [56.5, 36], [94, 62], // wing leading edge
     ...[0, 1, 2, 3, 4, 5, 6].map((i): number[] => { const a = (Math.PI * i) / 6; return [94 + 3.5 * Math.sin(a), 65.5 - 3.5 * Math.cos(a)] }), // rounded wing tip
     [56.5, 56], [56.5, 78], [73, 90], // wing trailing edge, fuselage, tailplane leading edge
