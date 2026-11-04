@@ -487,7 +487,7 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
   const DEG2 = Math.PI / 180
   const sideA = (side: number, a: number) => (side === 0 ? a : Math.PI - a)
   const f2 = sideA
-  // Windscreen: a WIDE, SHORT dark band across the upper nose. In the front projection it is the rectangle |x| <= 0.50 R, 0.265 R .. 0.335 R above the axis; a
+  // Windscreen: a WIDE, SHORT dark band across the upper nose. In the front projection it is the rectangle |x| <= 0.50 R, 0.265 R .. 0.335 R above the axis (private jets: see below); a
   // 14 x 3 grid of points is ray cast along the forward axis onto the nose surface of revolution (r = hypot(x, y)) and pushed 0.003 out along the normal.
   // One dark material, no frames, no pillar.
   const WS_OFF = 0.003
@@ -500,12 +500,15 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
   const windscreen: {tri0: number; tri1: number}[] = []
   {
     const t0 = g.tris
-    const pts: V[][] = [], ns: V[][] = [], rows = 3, cols = 14
+    // Private jets (bizSmall / bizLarge) get a tall angled wedge, 0.18 R .. 0.42 R, narrowing towards the roof; airliners keep the thin band.
+    const biz = fam === "bizSmall" || fam === "bizLarge"
+    const pts: V[][] = [], ns: V[][] = [], rows = biz ? 6 : 3, cols = 14
     for (let r = 0; r <= rows; r++) {
-      const y = lerp(0.265, 0.335, r / rows) * R
+      const y = (biz ? lerp(0.18, 0.42, r / rows) : lerp(0.265, 0.335, r / rows)) * R
+      const halfW = biz ? lerp(0.5, 0.36, r / rows) : 0.5
       const row: V[] = [], nr: V[] = []
       for (let c = 0; c <= cols; c++) {
-        const x = lerp(-0.5, 0.5, c / cols) * R
+        const x = lerp(-halfW, halfW, c / cols) * R
         const u = nose * (1 - tAtRadius(Math.hypot(x, y) / R))
         const q = skin(u, Math.atan2(y, x), WS_OFF)
         row.push(q.p); nr.push(q.n)
