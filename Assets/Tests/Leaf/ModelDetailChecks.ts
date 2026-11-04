@@ -71,8 +71,8 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       const widthPct = (xMax - xMin) / fus.D * 100, topR = yMax / R, botR = yMin / R
       print(`[SH-TEST] ${fam} front band: width ${widthPct.toFixed(1)} % of fuselage width, top ${topR.toFixed(3)} R, bottom ${botR.toFixed(3)} R, max |x| ${(Math.max(-xMin, xMax) / R).toFixed(3)} R`)
       c.check(`${fam}: front windscreen + 2 side windows present (${ws.length} panes, ${tris} tris), side windows face outward (${inward} inward)`, "inspection", ws.length === 3 && tris > 0 && inward === 0)
-      c.check(`${fam}: front band centred, width ${widthPct.toFixed(1)} % <= 45 %, |x| <= 0.45 R`, "inspection", Math.abs(xMin + xMax) < 1e-6 && widthPct <= 45 && Math.max(-xMin, xMax) <= 0.45 * R)
-      c.check(`${fam}: front band top ${topR.toFixed(3)} R <= 0.60 R, bottom ${botR.toFixed(2)} R >= 0.10 R`, "inspection", topR <= 0.6 && botR >= 0.1)
+      c.check(`${fam}: front band centred, width ${widthPct.toFixed(1)} % >= 55 %, |x| <= 0.56 R`, "inspection", Math.abs(xMin + xMax) < 1e-6 && widthPct >= 55 && Math.max(-xMin, xMax) <= 0.56 * R)
+      c.check(`${fam}: front band top ${topR.toFixed(3)} R <= 0.45 R, bottom ${botR.toFixed(2)} R >= 0.14 R`, "inspection", topR <= 0.45 && botR >= 0.14)
     }
 
     for (const fam of ["bizSmall", "bizLarge"] as ModelFamily[]) {
@@ -89,7 +89,7 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       const wind = gl.find((x) => x.kind === "wind"), side = gl.find((x) => x.kind === "side")
       c.check(`${fam}: one smooth canopy bubble (${wind ? wind.panels : 0} panel) and no chin / dome glass`, "inspection", !!wind && wind.panels === 1 && !gl.some((x) => x.kind === "dome" || x.kind === "chin"))
       c.check(`${fam}: canopy glass flush with the skin (gap ${wind ? wind.minGap.toFixed(4) + ".." + wind.maxGap.toFixed(4) : "-"} in 0.0001..0.0026)`, "inspection", !!wind && wind.minGap > 0.0001 && wind.maxGap < 0.0026)
-      c.check(`${fam}: one side window strip per side, flush (${side ? side.panels : 0} panels)`, "inspection", !!side && side.panels === 2 && side.minGap > 0.0001 && side.maxGap < 0.0026)
+      c.check(`${fam}: one side window strip per side, flush (${side ? side.panels : 0} panels)`, "inspection", !!side && side.panels === 2 && side.minGap > 0.0001 && side.maxGap < 0.0126)
       c.check(`${fam}: glass vertex normals point outward from the hull (${(wind?.inward ?? 0) + (side?.inward ?? 0)} inward)`, "inspection", !!wind && !!side && wind.inward === 0 && side.inward === 0)
       c.check(`${fam}: no clear-glass slot, no glass on the back or top of the tail boom`, "inspection", vertsOfSlot(geo, SLOT.CLEAR).length === 0)
       // every glass triangle faces outward from the hull (normal . vector from the body axis > 0); glass only in the cabin (front 55 % of the body), never on the roof

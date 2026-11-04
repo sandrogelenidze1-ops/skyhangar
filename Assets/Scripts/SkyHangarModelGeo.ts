@@ -487,48 +487,45 @@ function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
   const DEG2 = Math.PI / 180
   const sideA = (side: number, a: number) => (side === 0 ? a : Math.PI - a)
   const f2 = sideA
-  // Windscreen: one dark band on the FRONT of the nose, centred on x = 0, seen from ahead as a rectangle |x| <= 0.40 R, 0.12 R .. 0.55 R above the axis. Each
-  // front-plane grid point is projected straight back onto the nose cone (r = hypot(x, y)), so the glass hugs the cone flush. Plus one short small side window
-  // per side (0.12 D long, 0.16 R .. 0.34 R above the axis, |x| ~ 0.9 R) just behind the band. One dark material, no frames.
-  const WS_LIFT = 1.04
-  const skin = (u: number, a: number, lift: number): {p: V; n: V} => {
+  // Windscreen: a WIDE, SHORT dark band across the upper nose. In the front projection it is the rectangle |x| <= 0.55 R, 0.15 R .. 0.43 R above the axis; a
+  // 14 x 3 grid of points is ray cast along the forward axis onto the nose surface of revolution (r = hypot(x, y)) and pushed 0.003 out along the normal.
+  // Plus one small side window per side (0.10 D long) right behind the end of the band. One dark material, no frames, no pillar.
+  const WS_OFF = 0.003
+  const skin = (u: number, a: number, off: number): {p: V; n: V} => {
     const s0 = fusSec(u)
-    return {p: GeoBuilder.surfacePoint(s0, a, lift), n: GeoBuilder.surfaceNormal(s0, a)}
+    const n = GeoBuilder.surfaceNormal(s0, a)
+    return {p: add(GeoBuilder.surfacePoint(s0, a, 1), mul(n, off)), n}
   }
   const tAtRadius = (rho: number): number => { let lo = 0, hi = 1; for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (noseR(m) > rho) lo = m; else hi = m } return (lo + hi) / 2 }
   const windscreen: {tri0: number; tri1: number}[] = []
   {
     const t0 = g.tris
-    const pts: V[][] = [], rows = 8, cols = 12
+    const pts: V[][] = [], ns: V[][] = [], rows = 3, cols = 14
     for (let r = 0; r <= rows; r++) {
-      const y = lerp(0.12, 0.55, r / rows) * R
-      const row: V[] = []
+      const y = lerp(0.15, 0.43, r / rows) * R
+      const row: V[] = [], nr: V[] = []
       for (let c = 0; c <= cols; c++) {
-        const x = lerp(-0.4, 0.4, c / cols) * R
-        const rho = Math.hypot(x, y) / R
-        const u = nose * (1 - tAtRadius(rho))
-        row.push(skin(u, Math.atan2(y, x), WS_LIFT).p)
+        const x = lerp(-0.55, 0.55, c / cols) * R
+        const u = nose * (1 - tAtRadius(Math.hypot(x, y) / R))
+        const q = skin(u, Math.atan2(y, x), WS_OFF)
+        row.push(q.p); nr.push(q.n)
       }
-      pts.push(row)
+      pts.push(row); ns.push(nr)
     }
-    const ns: V[][] = pts.map((row, r) => row.map((p, c) => {
-      const n = norm(cross(sub(row[Math.min(cols, c + 1)], row[Math.max(0, c - 1)]), sub(pts[Math.min(rows, r + 1)][c], pts[Math.max(0, r - 1)][c])))
-      return n[2] > 0 ? mul(n, -1) : n // front-facing: the normal points toward -z (the nose)
-    }))
     g.grid(pts, ns, SLOT.GLASS)
     windscreen.push({tri0: t0, tri1: g.tris})
   }
   {
-    const uC = nose * (1 - tAtRadius(Math.hypot(0.9, 0.25))), hl = 0.06 * D
+    const uE = nose * (1 - tAtRadius(Math.hypot(0.55, 0.43))), hl = 0.10 * D
     for (const side of [0, 1]) {
       const t0 = g.tris
       const pts: V[][] = [], ns: V[][] = []
       for (let r = 0; r <= 4; r++) {
-        const u = lerp(uC - hl, uC + hl, r / 4)
-        const rv = fusSec(u).rv * WS_LIFT
+        const u = lerp(uE, uE + hl, r / 4)
+        const rv = fusSec(u).rv
         const aLo = Math.asin(Math.min(1, 0.16 * R / rv)), aHi = Math.asin(Math.min(1, 0.34 * R / rv))
         const pr: V[] = [], nr: V[] = []
-        for (let c = 0; c <= 2; c++) { const q = skin(u, sideA(side, lerp(aLo, aHi, c / 2)), WS_LIFT); pr.push(q.p); nr.push(q.n) }
+        for (let c = 0; c <= 2; c++) { const q = skin(u, sideA(side, lerp(aLo, aHi, c / 2)), WS_OFF); pr.push(q.p); nr.push(q.n) }
         pts.push(pr); ns.push(nr)
       }
       g.grid(pts, ns, SLOT.GLASS)
@@ -841,8 +838,9 @@ function heliGeo(fam: HeliFamily, lg: LiveryGeo): ModelGeo {
     }))
     emit("wind", pts, ns, cs, () => rayO)
     // side windows: one rounded rectangle per side, 15..45 % of the cabin length behind the nose, 45..80 % of the cabin height
-    const zm = z0 + 0.3 * Lc, hl = 0.15 * Lc, ym = yAt(0.625), hh = 0.175 * Hc
+    const zm = z0 + 0.3 * Lc, hl = 0.12 * Lc, ym = yAt(0.625), hh = 0.175 * Hc
     const NSQ = 5
+    const SIDE_OFF = 0.01 // lateral projection onto the hull, pushed 0.01 out so the glass never z-fights the skin at shelf distance
     for (const side of [0, 1]) {
       const sp: V[][] = [], sn: V[][] = [], sc: V[][] = []
       for (let r = 0; r <= 6; r++) {
@@ -853,20 +851,20 @@ function heliGeo(fam: HeliFamily, lg: LiveryGeo): ModelGeo {
           const z = zm + u * f * hl, y = ym + v * f * hh
           const s0 = fn(z)
           const a = angleAt(s0, y, side === 0 ? 1 : -1)
-          pr.push(glassPt(s0, a)); nr.push(GeoBuilder.surfaceNormal(s0, a)); cr.push(GeoBuilder.surfacePoint(s0, a, 1))
+          pr.push(add(GeoBuilder.surfacePoint(s0, a, 1), mul(GeoBuilder.surfaceNormal(s0, a), SIDE_OFF))); nr.push(GeoBuilder.surfaceNormal(s0, a)); cr.push(GeoBuilder.surfacePoint(s0, a, 1))
         }
         sp.push(pr); sn.push(nr); sc.push(cr)
       }
       emit("side", sp, sn, sc, (p) => fn(p[2]).c)
     }
-    // round portholes behind the door window: flat 16-segment discs, 0.18 of the cabin height across, at 62 % of the cabin height, 0.005 off the hull.
+    // round portholes behind the door window: flat 16-segment discs, 0.26 of the cabin height across, at 62 % of the cabin height, 0.01 off the hull.
     // Two per side (55 % and 75 % of the cabin length), one at 65 % on the short-cabin light helicopters.
     for (const f of fam === "lightPiston" || fam === "lightTurbine" ? [0.65] : [0.55, 0.75]) {
       for (const side of [0, 1]) {
         const s0 = fn(z0 + f * Lc)
         const a = angleAt(s0, yAt(0.62), side === 0 ? 1 : -1)
         const n = GeoBuilder.surfaceNormal(s0, a)
-        g.disc(add(GeoBuilder.surfacePoint(s0, a, 1), mul(n, 0.005)), n, 0.09 * Hc, SLOT.GLASS, 16)
+        g.disc(add(GeoBuilder.surfacePoint(s0, a, 1), mul(n, SIDE_OFF)), n, 0.13 * Hc, SLOT.GLASS, 20)
       }
     }
     // livery stripe: a band along each side of the cabin below the window (22..34 % of the cabin height), in the SECONDARY colour
