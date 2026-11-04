@@ -353,31 +353,48 @@ function winglet(g: GeoBuilder, sgn: number, tipc: V, chord: number, kind: 1 | 2
 // Half-span as a fraction of fuselage length: short-winged regionals / bizjets, long-winged big twins.
 const SEMI: {[f: string]: number} = {narrowbody: 0.485, widebody: 0.475, largeWidebody: 0.485, jumbo: 0.485, superjumbo: 0.5, regional: 0.39, turboprop: 0.46, bizSmall: 0.36, bizLarge: 0.42}
 
+/** Airliner nose radius ratio r/R by t (distance from the nose start / nose length): 1 at the barrel, a small rounded cap (0.05 R) at the tip. */
+export const NOSE_PROFILE: [number, number][] = [[0, 1], [0.1, 0.985], [0.2, 0.95], [0.3, 0.89], [0.4, 0.81], [0.5, 0.71], [0.6, 0.6], [0.7, 0.47], [0.8, 0.34], [0.9, 0.19], [0.97, 0.08], [0.99, 0.065], [1, 0.05]]
+/** Rings along the nose (t values): the knots plus midpoints, 24 rings. */
+export const NOSE_RING_T = [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.94, 0.97, 0.985, 0.995, 1]
+
+/** Monotone cubic (Fritsch-Carlson) through NOSE_PROFILE: smooth, no overshoot, so the nose never bulges or kinks. */
+export function noseRadiusRatio(t: number): number {
+  const K = NOSE_PROFILE, n = K.length
+  const x = clamp(t, 0, 1)
+  const d: number[] = [], m: number[] = []
+  for (let i = 0; i < n - 1; i++) d.push((K[i + 1][1] - K[i][1]) / (K[i + 1][0] - K[i][0]))
+  m.push(d[0])
+  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2)
+  m.push(d[n - 2])
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], h = a * a + b * b
+    if (h > 9) { const k = 3 / Math.sqrt(h); m[i] = k * a * d[i]; m[i + 1] = k * b * d[i] }
+  }
+  let i = 0
+  while (i < n - 2 && x > K[i + 1][0]) i++
+  const h = K[i + 1][0] - K[i][0], s = (x - K[i][0]) / h
+  const s2 = s * s, s3 = s2 * s
+  return (2 * s3 - 3 * s2 + 1) * K[i][1] + (s3 - 2 * s2 + s) * h * m[i] + (-2 * s3 + 3 * s2) * K[i + 1][1] + (s3 - s2) * h * m[i + 1]
+}
+
 function airlinerGeo(fam: string): ModelGeo {
   const P = AIR[fam]
   const g = new GeoBuilder()
   const D = P.D, R = D / 2
-  // Tapered ogive nose: full fuselage radius down to a small tip radius over NOSE_D fuselage diameters (regional / business jets: narrower and longer).
+  // Nose: a surface of revolution about the fuselage centreline (no droop). Length Ln: 1.4 D airliners, 1.5 D regional / business jets, 0.9 D turboprop.
+  // t = distance from the nose start (barrel junction) / Ln; radius ratio r/R follows NOSE_PROFILE (monotone cubic between the knots), ending in a small rounded cap.
   const slim = fam === "regional" || fam === "bizSmall" || fam === "bizLarge"
-  const nose = (slim ? 1.7 : fam === "turboprop" ? 1.4 : 1.5) * D
-  const TIP = slim ? 0.1 : fam === "turboprop" ? 0.2 : 0.12 // tip radius as a fraction of the fuselage radius
+  const nose = (slim ? 1.5 : fam === "turboprop" ? 0.9 : 1.4) * D
   const zAt = (u: number) => -0.5 + u
   const tailStart = 1 - P.tail
   const smooth = (a: number, b: number, x: number) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t) }
-
-  // Tangent ogive r(x) = sqrt(rho^2 - (L-x)^2) + R - rho (rho = (R^2+L^2)/2R), tangent to the barrel at x = L, lifted so the tip keeps radius TIP*R.
-  const ogR = (t: number) => {
-    const L = nose / R, rho = (1 + L * L) / 2, x = clamp(t, 0, 1) * L
-    const raw = Math.sqrt(Math.max(0, rho * rho - (L - x) * (L - x))) + 1 - rho
-    return TIP + (1 - TIP) * clamp(raw, 0, 1)
-  }
-  const noseR = ogR
-  // --- fuselage: rounded dome nose (1.4 D), straight cabin, up-swept tail cone, optional upper deck ---
+  const noseR = (t: number) => noseRadiusRatio(t)
   const prof = (u: number): {f: number; cy: number; top: number} => {
     let f = 1, cy = 0
     if (u < nose) {
-      f = noseR(u / nose) // blunt dome that blends tangent into the barrel (vertical position comes from noseTop / noseKeel)
-      cy = 0
+      f = noseR((nose - u) / nose)
     } else if (u > tailStart) {
       const s = (u - tailStart) / P.tail
       f = 1 - 0.88 * Math.pow(s, 1.2)
@@ -388,30 +405,22 @@ function airlinerGeo(fam: string): ModelGeo {
     else if (P.deck === 2) top = P.deckH * D * smooth(0.2, 0.3, u) * (1 - smooth(0.74, 0.9, u))
     return {f, cy, top}
   }
-  // Nose: crown (top) and keel (bottom) lines are authored separately. The top line eases up from the tip (smoothstep: flat at the tip, steepest
-  // through the windscreen zone, flat again at the crown); the keel follows the dome profile so the side silhouette is rounded too; the radome tip sits NOSE_DROOP below the axis.
-  const NOSE_DROOP = 0.1 * D // nose tip ~0.1 D below the centreline
-  const noseTop = (u: number) => -NOSE_DROOP + (1.02 * R + NOSE_DROOP) * (TIP + (1 - TIP) * smooth(0, nose, u))
-  const noseKeel = (u: number) => -NOSE_DROOP + (-0.96 * R + NOSE_DROOP) * noseR(u / nose)
+  // The nose is a plain circle on the centreline; the barrel eases into its slightly deeper belly over the first diameter behind the junction.
   const fusSec = (u: number): Sec => {
     const p = prof(u)
     const r = R * Math.max(p.f, 0.04)
-    if (u < nose) {
-      const t = noseTop(u), b = noseKeel(u), hh = (t - b) / 2 + p.top * Math.min(1, p.f * 1.4)
-      return mk([0, (t + b) / 2, zAt(u)], X, Y, r, hh, (t - b) / 2)
-    }
-    return mk([0, p.cy, zAt(u)], X, Y, r, r * 1.02 + p.top * Math.min(1, p.f * 1.4), r * 0.96)
+    if (u <= nose) return mk([0, 0, zAt(u)], X, Y, r, r)
+    const k = smooth(nose, nose + D, u)
+    return mk([0, p.cy, zAt(u)], X, Y, r, r * (1 + 0.02 * k) + p.top * Math.min(1, p.f * 1.4), r * (1 - 0.04 * k))
   }
   const us: number[] = []
-  for (const t of [0, 0.012, 0.03, 0.06, 0.1, 0.16, 0.24, 0.34]) us.push(t * nose)
-  for (let q = 0.5; q <= 1.8; q += 0.1) us.push(q * D) // nose + windscreen zone: rows 0.1 D apart so glass tracks the skin
-  us.push(nose)
+  for (const t of NOSE_RING_T) us.push(nose * (1 - t))
   if (P.deck) for (const u of [0.22, 0.27, 0.32, 0.38, 0.45, 0.55, 0.65, 0.75, 0.85]) us.push(u)
-  us.push((nose + tailStart) / 2, tailStart)
+  us.push(nose + 0.5 * D, nose + D, (nose + tailStart) / 2, tailStart)
   for (const s of [0.2, 0.42, 0.65, 0.85, 1]) us.push(tailStart + s * P.tail)
   us.sort((a, b) => a - b)
   const uniq = us.filter((u, i) => i === 0 || u - us[i - 1] > 1e-4)
-  g.loft(uniq.map(fusSec), SLOT.PRIMARY, {sides: P.deck ? 16 : 18, capStart: SLOT.METAL, capEnd: SLOT.PRIMARY, rowSlots: [SLOT.METAL, SLOT.METAL]}) // first two rows = tiny radome tip
+  g.loft(uniq.map(fusSec), SLOT.PRIMARY, {sides: 24, capStart: SLOT.METAL, capEnd: SLOT.PRIMARY, rowSlots: [SLOT.METAL]}) // first row = the tiny radome cap
 
   // surface patches ride on the fuselage; `rows` give (u, angle range) so a patch can slope
   const patch = (rows: [number, number, number][], cols: number, slot: number, lift: number) => {
@@ -437,37 +446,33 @@ function airlinerGeo(fam: string): ModelGeo {
   const DEG2 = Math.PI / 180
   const sideA = (side: number, a: number) => (side === 0 ? a : Math.PI - a)
   const f2 = sideA
-  // Windscreen: ONE continuous dark visor wrapping WS_WRAP degrees around the upper front of the nose, WS_H (~0.22 D) tall, starting ~0.9 D behind
-  // the tip (pulled forward only as far as keeps the centroid inside the first 12 % of L). Glass sits WS_OFF off the skin inside a thin body-colour
-  // frame, with one subtle centre divider. No side cockpit windows.
-  const WS_OFF = 0.0018, WS_FRAME_OFF = 0.0009, WS_FRAME_U = 0.005, WS_FRAME_A = 0.03
-  const WS_WRAP = 110 * DEG2, WS_H = 0.2 * D // 0.2 D along the axis = ~0.22 D along the sloping surface
-  const wsU0 = Math.min(0.9 * D, 0.112 - 0.56 * WS_H)
-  const skin = (u: number, a: number, off: number): {p: V; n: V} => {
+  // Windscreen glass: a dark tinted band flush with the hull, no frame, no divider. Centre height +0.30 R above the axis, 0.25 R tall (0.175 R .. 0.425 R,
+  // nothing near the crown), from t = 0.45 on the nose to 0.35 D behind the nose start. A band at that height meets the hull on the two flanks of the nose
+  // (it can only cross the centreline at the very tip), so it is one pane per side wrapping round the cone-to-barrel junction.
+  const WS_LIFT = 1.015, WS_Y0 = 0.175 * R, WS_Y1 = 0.425 * R
+  const wsU0 = nose * (1 - 0.45), wsU1 = nose + 0.35 * D
+  const skin = (u: number, a: number, lift: number): {p: V; n: V} => {
     const s0 = fusSec(u)
-    const n = GeoBuilder.surfaceNormal(s0, a)
-    return {p: add(GeoBuilder.surfacePoint(s0, a, 1), mul(n, off)), n}
+    return {p: GeoBuilder.surfacePoint(s0, a, lift), n: GeoBuilder.surfaceNormal(s0, a)}
   }
-  const quadGrid = (u0: number, u1: number, a0: number, a1: number, rows: number, cols: number, off: number, slot: number) => {
+  const windscreen: {tri0: number; tri1: number}[] = []
+  for (const side of [0, 1]) {
+    const t0 = g.tris
     const pts: V[][] = [], ns: V[][] = []
-    for (let r = 0; r <= rows; r++) {
+    const rowsN = 14, cols = 4
+    for (let r = 0; r <= rowsN; r++) {
+      const u = lerp(wsU0, wsU1, r / rowsN)
+      const rv = fusSec(u).rv * WS_LIFT
+      const aLo = Math.asin(Math.min(1, WS_Y0 / rv)), aHi = Math.asin(Math.min(1, WS_Y1 / rv))
       const pr: V[] = [], nr: V[] = []
       for (let c = 0; c <= cols; c++) {
-        const q = skin(lerp(u0, u1, r / rows), lerp(a0, a1, c / cols), off)
+        const q = skin(u, sideA(side, lerp(aLo, aHi, c / cols)), WS_LIFT)
         pr.push(q.p); nr.push(q.n)
       }
       pts.push(pr); ns.push(nr)
     }
-    g.grid(pts, ns, slot)
-  }
-  const windscreen: {tri0: number; tri1: number}[] = []
-  {
-    const aLo = Math.PI / 2 - WS_WRAP / 2, aHi = Math.PI / 2 + WS_WRAP / 2
-    quadGrid(wsU0 - WS_FRAME_U, wsU0 + WS_H + WS_FRAME_U, aLo - WS_FRAME_A, aHi + WS_FRAME_A, 8, 16, WS_FRAME_OFF, SLOT.PRIMARY) // frame plate under the glass
-    const t0 = g.tris
-    quadGrid(wsU0, wsU0 + WS_H, aLo, aHi, 8, 16, WS_OFF, SLOT.GLASS)
+    g.grid(pts, ns, SLOT.GLASS)
     windscreen.push({tri0: t0, tri1: g.tris})
-    quadGrid(wsU0, wsU0 + WS_H, Math.PI / 2 - 0.025, Math.PI / 2 + 0.025, 8, 1, WS_OFF + 0.0004, SLOT.PRIMARY) // centre divider
   }
   // passenger windows: small round dark discs 1 mm-ish proud, one row per side, 25 deg above the midline, 0.14 L .. 0.80 L from the nose
   const WIN_A = 25 * DEG2

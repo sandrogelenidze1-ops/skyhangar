@@ -6,7 +6,7 @@ export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
 }
 
-const AIRLINERS: ModelFamily[] = ["narrowbody", "widebody", "largeWidebody", "jumbo", "superjumbo", "regional", "turboprop"]
+const AIRLINERS: ModelFamily[] = ["narrowbody", "widebody", "largeWidebody", "jumbo", "superjumbo", "regional", "turboprop", "bizSmall", "bizLarge"]
 const HELIS: ModelFamily[] = ["lightPiston", "lightTurbine", "mediumTwin", "largeTransport", "tandem"]
 const SATS: ModelFamily[] = ["cubesat", "comms", "flatpanel", "station"]
 
@@ -54,31 +54,27 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       const angs = mid.map((x) => (Math.atan2(x.c[1], Math.abs(x.c[0])) * 180) / Math.PI)
       const minA = Math.min(...angs), maxA = Math.max(...angs)
       c.check(`${fam}: window row ${minA.toFixed(1)}..${maxA.toFixed(1)} deg above midline (want ~25, not on top)`, "inspection", minA > 21 && maxA < 29)
-      // windscreen: one continuous visor on the sloping upper front; numbers come from the triangles themselves (area-weighted)
+      // windscreen: dark glass flush with the hull, flanking the nose from t = 0.45 to 0.35 D behind the nose start, 0.175 R .. 0.425 R above the axis
       const ws = geo.windscreen ?? []
       const g = geo.body
-      let nx = 0, ny = 0, nz = 0, area = 0, cz = 0
-      let topRoof = 0
+      const R = fus.D / 2
+      let yMin = 1e9, yMax = -1e9, zMin = 1e9, zMax = -1e9, inward = 0, tris = 0
       for (const p of ws) for (let t = p.tri0; t < p.tri1; t++) {
-        const i = [g.idx[t * 3], g.idx[t * 3 + 1], g.idx[t * 3 + 2]].map((k) => [g.pos[k * 3], g.pos[k * 3 + 1], g.pos[k * 3 + 2]])
-        const e1 = [i[1][0] - i[0][0], i[1][1] - i[0][1], i[1][2] - i[0][2]], e2 = [i[2][0] - i[0][0], i[2][1] - i[0][1], i[2][2] - i[0][2]]
-        const cx = e1[1] * e2[2] - e1[2] * e2[1], cy = e1[2] * e2[0] - e1[0] * e2[2], cw = e1[0] * e2[1] - e1[1] * e2[0]
-        nx += cx; ny += cy; nz += cw
-        const a = Math.hypot(cx, cy, cw) / 2
-        area += a
-        cz += a * ((i[0][2] + i[1][2] + i[2][2]) / 3)
+        const k = [g.idx[t * 3], g.idx[t * 3 + 1], g.idx[t * 3 + 2]]
+        const q = k.map((i) => [g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]])
+        for (const v of q) { yMin = Math.min(yMin, v[1]); yMax = Math.max(yMax, v[1]); zMin = Math.min(zMin, v[2]); zMax = Math.max(zMax, v[2]) }
+        const e1 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]], e2 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]]
+        const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
+        if (n[0] * (q[0][0] + q[1][0] + q[2][0]) + n[1] * (q[0][1] + q[1][1] + q[2][1]) < 0) inward++
+        tris++
       }
-      const nl = Math.hypot(nx, ny, nz) || 1
-      const fwd = -nz / nl, upd = ny / nl // nose points toward -z
-      const cD = (cz / (area || 1) - fus.zNose) / fus.D, cL = (cz / (area || 1) - fus.zNose) / fus.L
-      // no glass on the roof behind the windscreen (passenger windows are 25 deg above the midline, far from ny > 0.85)
-      for (const v of vertsOfSlot(geo, SLOT.GLASS)) if (v[4] > 0.85 && (v[2] - fus.zNose) / fus.D > 1.95) topRoof++
-      print(`[SH-TEST] ${fam} windscreen: ${ws.length} visor, normal.forward ${fwd.toFixed(2)}, normal.up ${upd.toFixed(2)}, centroid ${cD.toFixed(2)} D = ${(cL * 100).toFixed(1)} % L behind the tip`)
-      c.check(`${fam}: windscreen is one continuous visor`, "inspection", ws.length === 1)
-      c.check(`${fam}: windscreen faces forward (dot fwd ${fwd.toFixed(2)} >= 0.35)`, "inspection", fwd >= 0.35)
-      c.check(`${fam}: windscreen faces up only a little (dot up ${upd.toFixed(2)} in 0.25..0.95)`, "inspection", upd >= 0.25 && upd <= 0.95)
-      c.check(`${fam}: windscreen centroid ${cD.toFixed(2)} D (${(cL * 100).toFixed(1)} % L) behind the tip, inside 0.8..1.9 D and the first 12 % of L`, "inspection", cD >= 0.8 && cD <= 1.9 && cL <= 0.12)
-      c.check(`${fam}: no flat glass along the roof behind the nose`, "inspection", topRoof === 0)
+      const topR = yMax / R, botR = yMin / R, ctrR = (yMin + yMax) / 2 / R
+      const noseLen = (fam === "turboprop" ? 0.9 : fam === "regional" || fam === "bizSmall" || fam === "bizLarge" ? 1.5 : 1.4) * fus.D
+      const zStartD = (zMin - fus.zNose) / fus.D, zEndD = (zMax - fus.zNose) / fus.D
+      print(`[SH-TEST] ${fam} windscreen: top ${topR.toFixed(3)} R, bottom ${botR.toFixed(3)} R, centre ${ctrR.toFixed(3)} R, from ${zStartD.toFixed(2)} D to ${zEndD.toFixed(2)} D behind the tip (nose ${(noseLen / fus.D).toFixed(1)} D)`)
+      c.check(`${fam}: windscreen glass present (${ws.length} panes, ${tris} tris), faces outward (${inward} inward)`, "inspection", ws.length >= 1 && tris > 0 && inward === 0)
+      c.check(`${fam}: windscreen top ${topR.toFixed(3)} R <= 0.65 R and centre ${ctrR.toFixed(2)} R ~ 0.30 R`, "inspection", topR <= 0.65 && Math.abs(ctrR - 0.3) < 0.03)
+      c.check(`${fam}: windscreen starts at t=0.45 and ends 0.35 D behind the nose start`, "inspection", Math.abs(zStartD - noseLen / fus.D * 0.55) < 0.03 && Math.abs(zEndD - (noseLen / fus.D + 0.35)) < 0.03)
     }
 
     for (const fam of ["bizSmall", "bizLarge"] as ModelFamily[]) {
@@ -117,25 +113,31 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       c.check(`${fam}: no glass on the tail boom (${aft} aft tris)`, "inspection", aft === 0)
     }
 
-    // airliner nose: smooth ogive, full radius -> ~0.12 R tip over ~1.5 D, tip a little below the centreline
+    // airliner nose: surface of revolution on the centreline; radius ratio follows the spec table, small rounded cap at the tip
     for (const fam of AIRLINERS) {
-      if (fam === "turboprop") continue
       const geo = buildGeo(fam), fus = geo.fus!, g = geo.body
-      const slab = (d0: number, d1: number) => {
-        let w = 0, ymin = 1e9, n = 0
+      const slim = fam === "regional" || fam === "bizSmall" || fam === "bizLarge"
+      const Ln = (slim ? 1.5 : fam === "turboprop" ? 0.9 : 1.4) * fus.D
+      const R = fus.D / 2
+      // widest |x| and mean y of the vertices at a station (distance d behind the tip)
+      const ring = (t: number) => {
+        const zz = fus.zNose + Ln * (1 - t)
+        let w = 0, y = 0, n = 0
         for (let i = 0; i < g.verts; i++) {
-          const d = (g.pos[i * 3 + 2] - fus.zNose) / fus.D
-          if (d < d0 || d > d1) continue
-          w = Math.max(w, Math.abs(g.pos[i * 3])); ymin = Math.min(ymin, g.pos[i * 3 + 1]); n++
+          if (Math.abs(g.pos[i * 3 + 2] - zz) > 1e-6) continue
+          w = Math.max(w, Math.abs(g.pos[i * 3])); y += g.pos[i * 3 + 1]; n++
         }
-        return {r: w / (fus.D / 2), ymin: ymin / fus.D, n}
+        return {r: w / R, cy: n ? y / n : 0, n}
       }
-      const tip = slab(0, 0.04), mid = slab(0.7, 0.8), end = slab(1.45, 1.55)
-      print(`[SH-TEST] ${fam} nose radius/R: tip ${tip.r.toFixed(2)}, 0.75D ${mid.r.toFixed(2)}, 1.5D ${end.r.toFixed(2)}; tip y ${tip.ymin.toFixed(3)} D`)
-      c.check(`${fam}: nose tip radius ${tip.r.toFixed(2)} R is small but not a spike (0.05..0.4)`, "inspection", tip.r >= 0.05 && tip.r <= 0.4)
-      c.check(`${fam}: nose narrows clearly (0.75 D radius ${mid.r.toFixed(2)} R in 0.5..0.92 - not a hemisphere or a cone)`, "inspection", mid.r >= 0.5 && mid.r <= 0.92)
-      c.check(`${fam}: nose reaches full radius by ~1.5-1.7 D (${end.r.toFixed(2)} R at 1.5 D)`, "inspection", end.r >= 0.85)
-      c.check(`${fam}: nose tip sits below the centreline (${tip.ymin.toFixed(3)} D)`, "inspection", tip.ymin < -0.05 && tip.ymin > -0.2)
+      const r9 = ring(0.9), r5 = ring(0.5), tip = ring(1)
+      let tipYmin = 1e9, tipYmax = -1e9
+      for (let i = 0; i < g.verts; i++) if (g.pos[i * 3 + 2] - fus.zNose < 1e-6) { tipYmin = Math.min(tipYmin, g.pos[i * 3 + 1]); tipYmax = Math.max(tipYmax, g.pos[i * 3 + 1]) }
+      const tipOff = (tipYmin + tipYmax) / 2 / fus.D
+      print(`[SH-TEST] ${fam} nose: Ln ${(Ln / fus.D).toFixed(1)} D, tip offset ${tipOff.toFixed(4)} D, r/R at t=0.5 ${r5.r.toFixed(3)}, at t=0.9 ${r9.r.toFixed(3)}, tip ring ${tip.r.toFixed(3)} R`)
+      c.check(`${fam}: nose tip offset ${tipOff.toFixed(4)} D within 0.03 D of the centreline`, "inspection", Math.abs(tipOff) <= 0.03)
+      c.check(`${fam}: radius ratio at t=0.9 is ${r9.r.toFixed(3)} (want 0.19)`, "inspection", Math.abs(r9.r - 0.19) < 0.01)
+      c.check(`${fam}: radius ratio at t=0.5 is ${r5.r.toFixed(3)} (want 0.71)`, "inspection", Math.abs(r5.r - 0.71) < 0.01)
+      c.check(`${fam}: rounded tip radius ${tip.r.toFixed(3)} R (want 0.05)`, "inspection", Math.abs(tip.r - 0.05) < 0.01)
     }
 
     for (const fam of SATS) {
