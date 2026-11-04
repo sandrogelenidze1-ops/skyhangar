@@ -18,7 +18,7 @@ const KT_TO_KM_S = 1.852 / 3600
 const TRAIL_LEN_FRAC = 0.14 // contrail length as a fraction of the radar radius, before the speed factor
 const TRAIL_HEAD_W = 0.2 // ribbon width at the icon / at the tail, cm
 const TRAIL_TAIL_W = 0.08
-const TRAIL_HEAD_ALPHA = 0.8
+const TRAIL_HEAD_ALPHA = 0.9
 const TRAIL_Y = 0.45
 const TRAIL_COLOR = new vec4(0, 1, 1, 1) // cyan, distinct from the white plane icons
 const TRAIL_STRIDE = 12 // position 3 + normal 3 + uv 2 + colour 4
@@ -246,7 +246,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     const R = this.diameterCm / 2
     const mesh = b.getMesh()
     MESH_BOUNDS.set(mesh, {min: new vec3(-R, TRAIL_Y - 0.5, -R), max: new vec3(R, TRAIL_Y + 0.5, R)})
-    kit.part(this.discRoot, "RadarTrails", mesh, kit.uniqueUnlit(new vec4(1, 1, 1, 1)), new vec3(0, TRAIL_Y, 0), new vec3(R * 2, 1, R * 2))
+    kit.part(this.discRoot, "RadarTrails", mesh, kit.uniqueUnlit(new vec4(0, 1, 1, 1)), new vec3(0, TRAIL_Y, 0), new vec3(R * 2, 1, R * 2))
   }
 
   /** Rewrites every contrail quad (head at the icon, tail backward along the heading) and uploads once. */
