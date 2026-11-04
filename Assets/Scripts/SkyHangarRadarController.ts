@@ -18,9 +18,12 @@ const KT_TO_KM_S = 1.852 / 3600
 const TRAIL_LEN_FRAC = 0.14 // contrail length as a fraction of the radar radius, before the speed factor
 const TRAIL_HEAD_W = 0.2 // ribbon width at the icon / at the tail, cm
 const TRAIL_TAIL_W = 0.08
-const TRAIL_HEAD_ALPHA = 0.9
+const TRAIL_HEAD_ALPHA = 0.7
 const TRAIL_Y = 0.45
-const TRAIL_COLOR = new vec4(0, 1, 1, 1) // cyan, distinct from the white plane icons
+const TRAIL_RGB = new vec4(0, 1, 1, 1) // cyan, distinct from the white plane icons
+const TRAIL_TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material // the textured unlit material (the plain unlit shader has no vertex colour)
+const TRAIL_ORDER = 0 // the trails keep the disc's order; the plane icons are lifted above it
+const ICON_ORDER = 1
 const TRAIL_STRIDE = 12 // position 3 + normal 3 + uv 2 + colour 4
 
 interface Blip {
@@ -244,9 +247,29 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     b.updateMesh()
     this.trailBuilder = b
     const R = this.diameterCm / 2
+    const W = 64, H = 2
+    const tex = ProceduralTextureProvider.createWithFormat(W, H, TextureFormat.RGBA8Unorm)
+    const px = new Uint8Array(W * H * 4)
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const k = (y * W + x) * 4
+      px[k] = px[k + 1] = px[k + 2] = 255
+      px[k + 3] = Math.round(255 * (1 - x / (W - 1))) // u = 0 at the icon (opaque) -> u = 1 at the tail (clear)
+    }
+    ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, px)
+    const mat = TRAIL_TEX_MAT.clone()
+    mat.mainPass.baseTex = tex
+    mat.mainPass.baseColor = new vec4(TRAIL_RGB.x, TRAIL_RGB.y, TRAIL_RGB.z, TRAIL_HEAD_ALPHA)
+    mat.mainPass.depthWrite = false
     const mesh = b.getMesh()
     MESH_BOUNDS.set(mesh, {min: new vec3(-R, TRAIL_Y - 0.5, -R), max: new vec3(R, TRAIL_Y + 0.5, R)})
-    kit.part(this.discRoot, "RadarTrails", mesh, kit.uniqueUnlit(new vec4(0, 1, 1, 1)), new vec3(0, TRAIL_Y, 0), new vec3(R * 2, 1, R * 2))
+    const holder = kit.part(this.discRoot, "RadarTrails", mesh, mat, new vec3(0, TRAIL_Y, 0), new vec3(R * 2, 1, R * 2))
+    this.setOrderTree(holder, TRAIL_ORDER)
+    for (const bl of this.blips) this.setOrderTree(bl.visual, ICON_ORDER) // icons draw after (over) the trails
+  }
+
+  private setOrderTree(o: SceneObject, order: number): void {
+    for (const v of o.getComponents("Component.MaterialMeshVisual") as MaterialMeshVisual[]) v.renderOrder = order
+    for (let i = 0; i < o.getChildrenCount(); i++) this.setOrderTree(o.getChild(i), order)
   }
 
   /** Rewrites every contrail quad (head at the icon, tail backward along the heading) and uploads once. */
@@ -273,8 +296,6 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       const hw = len > 0 ? TRAIL_HEAD_W / 2 : 0
       const tw = len > 0 ? TRAIL_TAIL_W / 2 : 0
       const k = i * 4 * TRAIL_STRIDE
-      const c = TRAIL_COLOR
-      const ha = TRAIL_HEAD_ALPHA
       for (let v = 0; v < 4; v++) {
         const o = k + v * TRAIL_STRIDE
         const head = v < 2
@@ -283,10 +304,8 @@ export class SkyHangarRadarController extends BaseScriptComponent {
         d[o] = (head ? hx : tx) + px * w * side
         d[o + 1] = TRAIL_Y
         d[o + 2] = (head ? hz : tz) + pz * w * side
-        d[o + 8] = head ? c.x * ha : 0 // rgb fades to black too, so it also vanishes on an additive display
-        d[o + 9] = head ? c.y * ha : 0
-        d[o + 10] = head ? c.z * ha : 0
-        d[o + 11] = head ? ha : 0
+        d[o + 6] = head ? 0 : 1 // u: 0 at the icon, 1 at the tail (the texture alpha runs 1 -> 0)
+        d[o + 7] = v % 2
       }
     }
     // setVertexInterleaved writes ONE vertex (12 floats), so upload per vertex
