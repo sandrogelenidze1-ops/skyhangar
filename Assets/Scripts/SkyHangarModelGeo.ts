@@ -263,7 +263,7 @@ export interface ModelGeo {
   /** Airliner windscreen glass: triangle ranges (into body.idx / 3) of each of the 6 panels. */
   windscreen?: {tri0: number; tri1: number}[]
   /** Helicopter glass: gap between the glass skin and the body skin, per glazing kind (model space) - must be > 0 and small. */
-  glazing?: {kind: string; minGap: number; maxGap: number; panels: number}[]
+  glazing?: {kind: string; minGap: number; maxGap: number; panels: number; inward: number}[]
 }
 
 export type AirlinerFamily = "narrowbody" | "widebody" | "largeWidebody" | "jumbo" | "superjumbo" | "regional" | "turboprop" | "bizSmall" | "bizLarge"
@@ -668,7 +668,7 @@ function heliGeo(fam: HeliFamily): ModelGeo {
   const rows = (zs: number[][]): PodRow[] => zs.map(([z, w, h, cy]) => ({z, w, h, cy}))
   const podSec = (r: PodRow): Sec => mk([0, r.cy, r.z], X, Y, r.w, r.h, r.h * 0.9)
   const pod = (zs: PodRow[], n: number, slot: number = SLOT.PRIMARY, sides: number = 24) => {
-    g.loft(zs.map(podSec), slot, {sides, n, capStart: slot, capEnd: slot})
+    g.loft(zs.map(podSec), slot, {sides, n, capStart: SLOT.GLASS, capEnd: slot}) // the small nose-tip disc is part of the dark front glass
     return (z: number): Sec => {
       let i = 0
       while (i < zs.length - 2 && z > zs[i + 1].z) i++
@@ -677,43 +677,99 @@ function heliGeo(fam: HeliFamily): ModelGeo {
       return {...mk([0, lerp(a.cy, b.cy, t), z], X, Y, lerp(a.w, b.w, t), lerp(a.h, b.h, t), lerp(a.h, b.h, t) * 0.9), n}
     }
   }
-  // Glazing. The nose stays body colour; one canopy bubble and one side strip per side are dark grey-blue
-  // panels sitting a hair above the skin, no frames.
-  const GLASS_LIFT = 1.012 // above the facet sag of a 24-sided body (1 - cos(pi/24) = 0.9 %)
-  const glazing: {kind: string; minGap: number; maxGap: number; panels: number}[] = []
-  const gapRec = (kind: string, s0: Sec, a: number, lift: number) => {
-    const gp = len(sub(GeoBuilder.surfacePoint(s0, a, lift), GeoBuilder.surfacePoint(s0, a, 1)))
+  // Glazing: no frames, no grids, no boxes. One smooth dark shell wraps the front of the nose (+-60 deg yaw, bottom 25 % .. top 80 % of the cabin height) and
+  // one rounded rectangle sits on each side door area (45 % .. 80 % of the cabin height, 15 % .. 45 % of the cabin length behind the nose). Every glass
+  // vertex is the hull point pushed out ~1 mm-equivalent along the hull normal, with the hull normal, so the glass curves with the body and never shows on the roof, boom or back.
+  const glassPt = (s0: Sec, a: number): V => add(GeoBuilder.surfacePoint(s0, a, 1), mul(GeoBuilder.surfaceNormal(s0, a), 0.0011 + 0.011 * s0.ru))
+  const glazing: {kind: string; minGap: number; maxGap: number; panels: number; inward: number}[] = []
+  const rec = (kind: string) => {
     let r = glazing.find((x) => x.kind === kind)
-    if (!r) { r = {kind, minGap: 1e9, maxGap: 0, panels: 0}; glazing.push(r) }
-    r.minGap = Math.min(r.minGap, gp); r.maxGap = Math.max(r.maxGap, gp)
+    if (!r) { r = {kind, minGap: 1e9, maxGap: 0, panels: 0, inward: 0}; glazing.push(r) }
+    return r
   }
-  const panelCount = (kind: string) => {
-    let r = glazing.find((x) => x.kind === kind)
-    if (!r) { r = {kind, minGap: 1e9, maxGap: 0, panels: 0}; glazing.push(r) }
-    r.panels++
+  /** Section angle (super-ellipse parameter) of the hull point at height y and lateral side `sgnX`; null when y is outside the section. */
+  const angleAt = (s0: Sec, y: number, sgnX: number): number => {
+    const nE = s0.n ?? 2
+    const dy = y - s0.c[1]
+    const q = Math.min(1, Math.abs(dy) / (dy >= 0 ? s0.rv : (s0.rv2 ?? s0.rv)))
+    const cx = Math.pow(Math.max(0, 1 - Math.pow(q, nE)), 1 / nE)
+    const sinA = Math.sign(dy) * Math.pow(q, nE / 2), cosA = Math.pow(cx, nE / 2)
+    const a = Math.atan2(sinA, cosA)
+    return sgnX >= 0 ? a : Math.PI - a
   }
-  const windowPanel = (fn: (z: number) => Sec, z0: number, z1: number, a0: number, a1: number, slot: number = SLOT.GLASS, kind: string = slot === SLOT.CLEAR ? "chin" : "side", R: number = 2, C: number = 4) => {
-    const pts: V[][] = [], ns: V[][] = []
-    for (let r = 0; r <= R; r++) {
-      const s0 = fn(lerp(z0, z1, r / R))
-      const pr: V[] = [], nr: V[] = []
-      for (let c = 0; c <= C; c++) {
-        gapRec(kind, s0, lerp(a0, a1, c / C), GLASS_LIFT)
-        pr.push(GeoBuilder.surfacePoint(s0, lerp(a0, a1, c / C), GLASS_LIFT))
-        nr.push(GeoBuilder.surfaceNormal(s0, lerp(a0, a1, c / C)))
+  const glaze = (fn: (z: number) => Sec, zs: PodRow[], cabinEnd: number) => {
+    const z0 = zs[0].z, Lc = cabinEnd - z0
+    let big = zs[0]
+    for (const r of zs) if (r.z <= cabinEnd && r.h > big.h) big = r
+    const yBot = big.cy - 0.9 * big.h, Hc = 1.9 * big.h
+    const yAt = (hf: number) => yBot + hf * Hc
+    const emit = (kind: string, pts: V[][], ns: V[][], cs: V[][], from: (p: V) => V) => {
+      const r = rec(kind)
+      for (let i = 0; i < pts.length; i++) for (let j = 0; j < pts[i].length; j++) {
+        const gap = len(sub(pts[i][j], cs[i][j]))
+        r.minGap = Math.min(r.minGap, gap); r.maxGap = Math.max(r.maxGap, gap)
+        if (dot(ns[i][j], sub(pts[i][j], from(pts[i][j]))) < 0) r.inward++
       }
-      pts.push(pr); ns.push(nr)
+      g.grid(pts, ns, SLOT.GLASS)
+      r.panels++
     }
-    g.grid(pts, ns, slot)
-    panelCount(kind)
-  }
-  /** One smooth dark canopy bubble wrapping the nose: glass flush with the skin, no frame, no centre post. */
-  const windscreen = (fn: (z: number) => Sec, z0: number, z1: number) => windowPanel(fn, z0, z1, Math.PI / 2 - 1.15, Math.PI / 2 + 1.15, SLOT.GLASS, "wind", 8, 14)
-  /** One side window strip per side, flush with the body (nothing on the back, boom or roof). */
-  const sideWindows = (fn: (z: number) => Sec, z0: number, z1: number, a0: number, a1: number) => {
+    // front shell: rays from the cabin axis at yaw -60..+60 deg and heights 25..80 %, first exit through the hull
+    // the rays start on the axis just behind the shell so that its +-60 deg flank edge ends ahead of the side window (12 % of the cabin length)
+    const zEnd = z0 + 0.12 * Lc
+    const zRay = zEnd + fn(zEnd).ru * 0.5774
+    const sRay = fn(zRay)
+    const rayO: V = [0, sRay.c[1], zRay]
+    const inside = (x: number, y: number, z: number): boolean => {
+      if (z < z0 || z > zs[zs.length - 1].z) return false
+      const s0 = fn(z), nE = s0.n ?? 2, dy = y - s0.c[1]
+      return Math.pow(Math.abs(x) / s0.ru, nE) + Math.pow(Math.abs(dy) / (dy >= 0 ? s0.rv : (s0.rv2 ?? s0.rv)), nE) <= 1
+    }
+    const R_ = 10, C_ = 30
+    const pts: V[][] = [], cs: V[][] = []
+    for (let r = 0; r <= R_; r++) {
+      const y = clamp(yAt(lerp(0.25, 0.8, r / R_)), sRay.c[1] - 0.9 * (sRay.rv2 ?? sRay.rv), sRay.c[1] + 0.9 * sRay.rv)
+      const pr: V[] = [], cr: V[] = []
+      for (let c = 0; c <= C_; c++) {
+        const psi = lerp(-60, 60, c / C_) * Math.PI / 180
+        const dx = Math.sin(psi), dz = -Math.cos(psi)
+        let lo = 0, hi = 0.6
+        for (let it = 0; it < 24; it++) { const m = (lo + hi) / 2; if (inside(dx * m, y, zRay + dz * m)) lo = m; else hi = m }
+        let x = dx * lo, z = zRay + dz * lo
+        if (z - z0 < 0.0012) { // the ray leaves through the nose-tip disc: glass just in front of it
+          x = dx * ((zRay - z0) / -dz)
+          pr.push([x, y, z0 - 0.0011]); cr.push([x, y, z0])
+          continue
+        }
+        const s0 = fn(z)
+        const a = angleAt(s0, y, x)
+        pr.push(glassPt(s0, a)); cr.push(GeoBuilder.surfacePoint(s0, a, 1))
+      }
+      pts.push(pr); cs.push(cr)
+    }
+    const ns: V[][] = pts.map((row, r) => row.map((p, c) => {
+      const du = sub(row[Math.min(C_, c + 1)], row[Math.max(0, c - 1)]), dv = sub(pts[Math.min(R_, r + 1)][c], pts[Math.max(0, r - 1)][c])
+      const n = norm(cross(du, dv))
+      return dot(n, sub(p, rayO)) < 0 ? mul(n, -1) : n
+    }))
+    emit("wind", pts, ns, cs, () => rayO)
+    // side windows: one rounded rectangle per side, 15..45 % of the cabin length behind the nose, 45..80 % of the cabin height
+    const zm = z0 + 0.3 * Lc, hl = 0.15 * Lc, ym = yAt(0.625), hh = 0.175 * Hc
+    const NSQ = 5
     for (const side of [0, 1]) {
-      const f = (a: number) => (side === 0 ? a : Math.PI - a)
-      windowPanel(fn, z0, z1, f(a0), f(a1), SLOT.GLASS, "side", 6, 2)
+      const sp: V[][] = [], sn: V[][] = [], sc: V[][] = []
+      for (let r = 0; r <= 6; r++) {
+        const pr: V[] = [], nr: V[] = [], cr: V[] = []
+        for (let c = 0; c <= 10; c++) {
+          const u = (c / 10) * 2 - 1, v = (r / 6) * 2 - 1
+          const f = Math.max(Math.abs(u), Math.abs(v)) / Math.max(1e-9, Math.pow(Math.pow(Math.abs(u), NSQ) + Math.pow(Math.abs(v), NSQ), 1 / NSQ))
+          const z = zm + u * f * hl, y = ym + v * f * hh
+          const s0 = fn(z)
+          const a = angleAt(s0, y, side === 0 ? 1 : -1)
+          pr.push(glassPt(s0, a)); nr.push(GeoBuilder.surfaceNormal(s0, a)); cr.push(GeoBuilder.surfacePoint(s0, a, 1))
+        }
+        sp.push(pr); sn.push(nr); sc.push(cr)
+      }
+      emit("side", sp, sn, sc, (p) => fn(p[2]).c)
     }
   }
   const skids = (xs: number, ys: number, z0: number, z1: number, struts: number[], h: number) => {
@@ -770,9 +826,7 @@ function heliGeo(fam: HeliFamily): ModelGeo {
     // R44 style: bubble cabin, cowled engine behind, slim boom ~1.7x cabin, two long thin blades
     const zs = rows([[-0.3, 0.014, 0.014, -0.012], [-0.288, 0.04, 0.034, -0.014], [-0.25, 0.058, 0.056, -0.004], [-0.2, 0.066, 0.072, 0], [-0.16, 0.068, 0.076, 0.003], [-0.07, 0.062, 0.07, 0.008], [-0.03, 0.05, 0.055, 0.016]])
     const fn = pod(zs, 2.3)
-    windscreen(fn, -0.28, -0.19)
-    sideWindows(fn, -0.14, -0.065, 0.2, 0.7)
-    g.loft([mk([0, 0.062, -0.05], X, Y, 0.04, 0.02), mk([0, 0.085, -0.01], X, Y, 0.05, 0.032), mk([0, 0.085, 0.045], X, Y, 0.042, 0.03), mk([0, 0.06, 0.09], X, Y, 0.018, 0.012)], SLOT.SECONDARY, {sides: 12, capStart: SLOT.SECONDARY, capEnd: SLOT.SECONDARY})
+    glaze(fn, zs, -0.06)
     boom(0.04, 0.46, 0.058, 0.082, 0.026, 0.008, SLOT.PRIMARY)
     fin(0.405, 0.082, 0.075, 0.06, 0.032, 0.03, SLOT.SECONDARY)
     g.box([0, 0.086, 0.43], 0.05, 0.003, 0.016, SLOT.PRIMARY)
@@ -784,8 +838,7 @@ function heliGeo(fam: HeliFamily): ModelGeo {
     // JetRanger style: smooth teardrop cabin flowing into a tapered boom, offset tail rotor
     const zs = rows([[-0.32, 0.014, 0.014, -0.016], [-0.305, 0.045, 0.04, -0.016], [-0.27, 0.064, 0.06, -0.008], [-0.22, 0.078, 0.085, 0], [-0.16, 0.082, 0.094, 0.006], [-0.05, 0.078, 0.09, 0.012], [0.05, 0.056, 0.066, 0.026], [0.13, 0.03, 0.036, 0.042]])
     const fn = pod(zs, 2.2)
-    windscreen(fn, -0.295, -0.2)
-    sideWindows(fn, -0.17, -0.02, 0.18, 0.75)
+    glaze(fn, zs, -0.03)
     cowl(0, 0.088, -0.05, 0.09, 0.05, 0.034, SLOT.PRIMARY)
     boom(0.11, 0.5, 0.05, 0.095, 0.03, 0.009, SLOT.PRIMARY)
     fin(0.44, 0.092, 0.095, 0.075, 0.035, 0.05, SLOT.SECONDARY)
@@ -798,10 +851,8 @@ function heliGeo(fam: HeliFamily): ModelGeo {
     // EC135 style: larger cabin, twin engine bumps, fenestron, four blades
     const zs = rows([[-0.33, 0.014, 0.014, -0.02], [-0.315, 0.05, 0.045, -0.02], [-0.28, 0.07, 0.068, -0.01], [-0.22, 0.088, 0.095, 0], [-0.16, 0.092, 0.104, 0.006], [-0.02, 0.088, 0.1, 0.012], [0.08, 0.06, 0.07, 0.03], [0.17, 0.03, 0.038, 0.05]])
     const fn = pod(zs, 2.5)
-    windscreen(fn, -0.305, -0.21)
-    sideWindows(fn, -0.2, 0.0, 0.18, 0.75)
+    glaze(fn, zs, 0.0)
     for (const sgn of [-1, 1]) cowl(sgn * 0.034, 0.106, -0.1, 0.1, 0.028, 0.026, SLOT.PRIMARY)
-    cowl(0, 0.1, -0.12, 0.06, 0.05, 0.02, SLOT.SECONDARY)
     boom(0.14, 0.5, 0.062, 0.09, 0.034, 0.014, SLOT.PRIMARY)
     g.box([0, 0.09, 0.47], 0.003, 0.05, 0.034, SLOT.SECONDARY)
     g.box([0, 0.1, 0.44], 0.06, 0.003, 0.018, SLOT.PRIMARY)
@@ -813,10 +864,8 @@ function heliGeo(fam: HeliFamily): ModelGeo {
     // Super Puma / S-92 style: long boxy cabin, sponsons with wheels, raised tail pylon with rotor, four blades
     const zs = rows([[-0.4, 0.03, 0.03, -0.03], [-0.39, 0.07, 0.055, -0.03], [-0.36, 0.088, 0.08, -0.02], [-0.3, 0.098, 0.1, -0.005], [-0.28, 0.1, 0.104, 0.002], [0.12, 0.1, 0.104, 0.002], [0.22, 0.082, 0.088, 0.016], [0.3, 0.05, 0.06, 0.04]])
     const fn = pod(zs, 3.2)
-    windscreen(fn, -0.385, -0.29)
-    sideWindows(fn, -0.29, 0.08, 0.2, 0.55)
+    glaze(fn, zs, 0.1)
     for (const sgn of [-1, 1]) cowl(sgn * 0.044, 0.114, -0.2, 0.06, 0.03, 0.03, SLOT.PRIMARY)
-    cowl(0, 0.118, -0.22, 0.06, 0.06, 0.03, SLOT.SECONDARY)
     boom(0.22, 0.5, 0.045, 0.19, 0.048, 0.02, SLOT.PRIMARY)
     fin(0.455, 0.17, 0.08, 0.07, 0.04, 0.05, SLOT.SECONDARY)
     g.box([0, 0.19, 0.5], 0.05, 0.003, 0.018, SLOT.PRIMARY)
@@ -836,10 +885,8 @@ function heliGeo(fam: HeliFamily): ModelGeo {
     // Chinook style tandem: long boxy fuselage, raised rear pylon, two counter-rotating three-blade rotors
     const zs = rows([[-0.26, 0.03, 0.03, -0.012], [-0.25, 0.05, 0.04, -0.012], [-0.22, 0.06, 0.058, -0.004], [-0.17, 0.068, 0.07, 0.004], [-0.14, 0.07, 0.072, 0.006], [0.14, 0.07, 0.072, 0.006], [0.22, 0.062, 0.064, 0.016], [0.275, 0.03, 0.03, 0.036]])
     const fn = pod(zs, 3.0)
-    windscreen(fn, -0.245, -0.165)
-    sideWindows(fn, -0.14, 0.0, 0.2, 0.5)
+    glaze(fn, zs, 0.12)
     g.loft([mk([0, 0.082, 0.12], X, Y, 0.032, 0.03), mk([0, 0.16, 0.185], X, Y, 0.036, 0.07), mk([0, 0.22, 0.205], X, Y, 0.026, 0.05)], SLOT.PRIMARY, {sides: 12, capEnd: SLOT.PRIMARY})
-    g.loft([mk([0, 0.082, -0.155], X, Y, 0.03, 0.02), mk([0, 0.1, -0.15], X, Y, 0.034, 0.03), mk([0, 0.1, -0.1], X, Y, 0.03, 0.02)], SLOT.SECONDARY, {sides: 10, capStart: SLOT.SECONDARY, capEnd: SLOT.SECONDARY})
     for (const sgn of [-1, 1]) {
       cowl(sgn * 0.05, -0.052, -0.12, 0.09, 0.022, 0.03, SLOT.PRIMARY)
       for (const z of [-0.1, 0.1]) {

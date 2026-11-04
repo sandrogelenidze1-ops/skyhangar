@@ -92,12 +92,14 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       c.check(`${fam}: one smooth canopy bubble (${wind ? wind.panels : 0} panel) and no chin / dome glass`, "inspection", !!wind && wind.panels === 1 && !gl.some((x) => x.kind === "dome" || x.kind === "chin"))
       c.check(`${fam}: canopy glass flush with the skin (gap ${wind ? wind.minGap.toFixed(4) + ".." + wind.maxGap.toFixed(4) : "-"} in 0.0001..0.0026)`, "inspection", !!wind && wind.minGap > 0.0001 && wind.maxGap < 0.0026)
       c.check(`${fam}: one side window strip per side, flush (${side ? side.panels : 0} panels)`, "inspection", !!side && side.panels === 2 && side.minGap > 0.0001 && side.maxGap < 0.0026)
+      c.check(`${fam}: glass vertex normals point outward from the hull (${(wind?.inward ?? 0) + (side?.inward ?? 0)} inward)`, "inspection", !!wind && !!side && wind.inward === 0 && side.inward === 0)
       c.check(`${fam}: no clear-glass slot, no glass on the back or top of the tail boom`, "inspection", vertsOfSlot(geo, SLOT.CLEAR).length === 0)
       // every glass triangle faces outward from the hull (normal . vector from the body axis > 0); glass only in the cabin (front 55 % of the body), never on the roof
       const g = geo.body
       let inward = 0, tris = 0, aft = 0, zMin = 1e9, zMax = -1e9
       for (let i = 0; i < g.verts; i++) { zMin = Math.min(zMin, g.pos[i * 3 + 2]); zMax = Math.max(zMax, g.pos[i * 3 + 2]) }
       const gu = slotU(SLOT.GLASS)
+      const refY = 0, refZ = zMin + 0.2 * (zMax - zMin)
       for (let t = 0; t < g.tris; t++) {
         const k = [g.idx[t * 3], g.idx[t * 3 + 1], g.idx[t * 3 + 2]]
         if (Math.abs(g.uv[k[0] * 2] - gu) > 1e-6) continue
@@ -106,7 +108,7 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
         const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
         const cx = (p[0][0] + p[1][0] + p[2][0]) / 3, cy = (p[0][1] + p[1][1] + p[2][1]) / 3, cz = (p[0][2] + p[1][2] + p[2][2]) / 3
         tris++
-        if (n[0] * cx + n[1] * cy < 0) inward++
+        if (n[0] * cx + n[1] * (cy - refY) + n[2] * (cz - refZ) < 0) inward++ // outward = away from a point on the cabin axis
         if ((cz - zMin) / (zMax - zMin) > 0.55) aft++
       }
       c.check(`${fam}: glass face normals point outward (${inward} of ${tris} inward)`, "inspection", tris > 0 && inward === 0)
