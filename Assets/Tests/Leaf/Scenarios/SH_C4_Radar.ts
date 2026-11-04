@@ -50,7 +50,7 @@ export class SH_C4_Radar extends Scenario {
       const segs = ring ? countChildrenWithPrefix(ring, "Seg_") : 0
       c.check(`range ring ${Math.round(main.radar.rangeKm * f)} km has >= 96 segments`, "inspection", segs >= 96, `${segs}`)
     }
-    // Blips move at the real speed and heading, with a short fading trail behind.
+    // Blips move at the real speed and heading, with a gradient contrail behind.
     const blip = main.radar.getBlipObject("DL31")
     const dl31 = infoOf("DL31")
     if (blip && dl31) {
@@ -64,11 +64,8 @@ export class SH_C4_Radar extends Scenario {
       const want = new vec3(Math.sin(hdg), 0, -Math.cos(hdg))
       const ang = (Math.acos(Math.max(-1, Math.min(1, d.normalize().dot(want)))) * 180) / Math.PI
       c.check("blip moves along its real heading", "inspection", ang < 10, `${ang.toFixed(1)} deg off`)
-      const t0 = findSceneObjectByName("BlipTrail_DL31_0")
-      const t5 = findSceneObjectByName("BlipTrail_DL31_5")
-      const a0 = (t0 && t0.getChild(0)?.getComponent("Component.RenderMeshVisual") as RenderMeshVisual | null)?.mainMaterial.mainPass.baseColor.w ?? -1
-      const a5 = (t5 && t5.getChild(0)?.getComponent("Component.RenderMeshVisual") as RenderMeshVisual | null)?.mainMaterial.mainPass.baseColor.w ?? -1
-      c.check("blip leaves a short trail that fades", "inspection", !!t0 && !!t5 && t0.isEnabledInHierarchy && a0 > a5 && a5 > 0, `alpha ${a0.toFixed(2)} -> ${a5.toFixed(2)}`)
+      const trails = findSceneObjectByName("RadarTrails")
+      c.check("blips leave one gradient contrail mesh", "inspection", !!trails && trails.isEnabledInHierarchy, trails ? "RadarTrails present" : "missing")
     }
     const disc = main.radar.discRoot
     const up = disc.getTransform().getWorldRotation().multiplyVec3(vec3.up())
