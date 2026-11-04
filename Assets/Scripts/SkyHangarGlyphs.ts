@@ -1,11 +1,12 @@
 // SkyHangarGlyphs.ts
-// Owns: flat, camera-facing marker glyphs for the sky (and later the radar): a plane silhouette with
-// its nose on local +Y (wings and tailplane swept BACK, tips toward -Y), a helicopter with a rotor cross, and a satellite dot with a faint ring.
+// Owns: flat, camera-facing marker glyphs for the sky (and the radar): an airliner pictogram (one polygon, nose on local +Y,
+// wings and tailplane swept BACK, tips toward -Y), a helicopter with a rotor cross, and a satellite dot with a faint ring.
 // Glyphs lie in the local XY plane facing +Z, sized by `span` (cm, the widest dimension).
 // Expects: a PartKit. Must not: hold interaction or state.
 
 import {SkyKind} from "./SkyHangarFlightData"
 import {PartKit, makeObj} from "./SkyHangarUtil"
+import {polygonMesh, ringMesh, MESH_BOUNDS} from "./SkyHangarMeshes"
 
 export interface BuiltGlyph {
   root: SceneObject
@@ -14,6 +15,31 @@ export interface BuiltGlyph {
   baseAlpha: number[]
   /** Rotor cross pivot (helicopters) — spins about local Z. */
   rotor: SceneObject | null
+}
+
+/** Airliner pictogram outline in a 100 x 100 box (y down, nose up): fuselage x 43.5-56.5 y 4-92, wings swept back, tailplane swept back. */
+function planeOutline(): number[][] {
+  const arc = (cx: number, cy: number, rx: number, ry: number, a0: number, a1: number, n: number): number[][] => {
+    const out: number[][] = []
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + ((a1 - a0) * i) / n
+      out.push([cx + rx * Math.cos(a), cy - ry * Math.sin(a)])
+    }
+    return out
+  }
+  const right: number[][] = [
+    ...arc(50, 10, 6.5, 6, Math.PI / 2, 0, 8), // rounded nose, right half (top at y = 4)
+    [56.5, 36], [94, 62], // wing leading edge
+    ...[0, 1, 2, 3, 4, 5, 6].map((i): number[] => { const a = (Math.PI * i) / 6; return [94 + 3.5 * Math.sin(a), 65.5 - 3.5 * Math.cos(a)] }), // rounded wing tip
+    [56.5, 56], [56.5, 78], [73, 90], // wing trailing edge, fuselage, tailplane leading edge
+    ...[0, 1, 2, 3, 4].map((i): number[] => { const a = (Math.PI * i) / 4; return [73 + 2 * Math.sin(a), 92 - 2 * Math.cos(a)] }), // rounded tailplane tip
+    [54.12, 90.72], [53, 92] // tailplane trailing edge meets the tapered tail
+  ]
+  const left = right.map(([x, y]) => [100 - x, y]).reverse()
+  const same = (a: number[], b: number[]) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6
+  const all = [...right, ...left].filter((p, i, arr) => i === 0 || !same(p, arr[i - 1]))
+  if (same(all[0], all[all.length - 1])) all.pop()
+  return all
 }
 
 export function buildGlyph(kit: PartKit, parent: SceneObject, name: string, kind: SkyKind, span: number, color: vec4): BuiltGlyph {
@@ -29,12 +55,10 @@ export function buildGlyph(kit: PartKit, parent: SceneObject, name: string, kind
   }
   const rz = (a: number) => quat.angleAxis(a, vec3.forward())
   if (kind === "plane") {
-    part(root, "Fuselage", kit.box, main, new vec3(0, 0, 0), new vec3(S * 0.12, S * 0.92, t))
-    part(root, "Nose", kit.sphere, main, new vec3(0, S * 0.44, 0), new vec3(S * 0.12, S * 0.12, t))
-    part(root, "WingL", kit.box, main, new vec3(-S * 0.24, S * 0.02, 0), new vec3(S * 0.5, S * 0.13, t), rz(0.32))
-    part(root, "WingR", kit.box, main, new vec3(S * 0.24, S * 0.02, 0), new vec3(S * 0.5, S * 0.13, t), rz(-0.32))
-    part(root, "TailL", kit.box, main, new vec3(-S * 0.09, -S * 0.4, 0), new vec3(S * 0.2, S * 0.08, t), rz(0.3))
-    part(root, "TailR", kit.box, main, new vec3(S * 0.09, -S * 0.4, 0), new vec3(S * 0.2, S * 0.08, t), rz(-0.3))
+    const mesh = polygonMesh("planeGlyph", planeOutline().map(([x, y]) => [(x - 50) / 100, (50 - y) / 100]))
+    const bb = MESH_BOUNDS.get(mesh)!
+    const ctr = bb.min.add(bb.max).uniformScale(0.5), size = bb.max.sub(bb.min)
+    part(root, "Plane", mesh, main, new vec3(ctr.x * S, ctr.y * S, 0), new vec3(size.x * S, size.y * S, t))
   } else if (kind === "helicopter") {
     part(root, "Body", kit.sphere, main, new vec3(0, S * 0.08, 0), new vec3(S * 0.3, S * 0.38, t))
     part(root, "Boom", kit.box, main, new vec3(0, -S * 0.27, 0), new vec3(S * 0.07, S * 0.42, t))
@@ -53,10 +77,9 @@ export function buildGlyph(kit: PartKit, parent: SceneObject, name: string, kind
     base.push(0.35)
     const n = 24
     const r = S * 0.48
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2
-      part(root, "Ring_" + i, kit.box, ring, new vec3(Math.cos(a) * r, Math.sin(a) * r, 0), new vec3(t * 1.2, ((Math.PI * 2 * r) / n) * 0.9, t), rz(a))
-    }
+    const mesh = ringMesh("sat_" + S.toFixed(3), r, t * 1.2, t, n, "xy") // one draw call instead of 24 boxes
+    const bb = MESH_BOUNDS.get(mesh)!
+    part(root, "Ring", mesh, ring, bb.min.add(bb.max).uniformScale(0.5), bb.max.sub(bb.min))
   }
   return {root, materials: mats, baseAlpha: base, rotor}
 }

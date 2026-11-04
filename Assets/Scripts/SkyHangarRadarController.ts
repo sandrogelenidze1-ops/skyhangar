@@ -11,7 +11,7 @@ import {SkyObjectInfo} from "./SkyHangarFlightData"
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, yawOf, yawOffset, yawRotation, DEG} from "./SkyHangarUtil"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
-import {latheMesh} from "./SkyHangarMeshes"
+import {latheMesh, ringMesh, MESH_BOUNDS} from "./SkyHangarMeshes"
 
 const RING_MIN_SEGMENTS = 96 // smooth circles
 const KT_TO_KM_S = 1.852 / 3600
@@ -234,12 +234,9 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private buildRing(mat: Material, r: number, w: number): void {
     const kit = this.sky.partKit
     const n = Math.max(RING_MIN_SEGMENTS, Math.floor(r * 6))
-    const ring = makeObj(this.discRoot, "RangeRing_" + Math.round(r))
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2
-      const p = new vec3(Math.sin(a) * r, 0.1, -Math.cos(a) * r)
-      kit.part(ring, "Seg_" + i, kit.box, mat, p, new vec3(((Math.PI * 2 * r) / n) * 1.02, 0.12, w), quat.angleAxis(-a, vec3.up()))
-    }
+    const mesh = ringMesh("radar_" + r.toFixed(2) + "_" + w, r, w, 0.12, n, "xz") // one draw call per ring
+    const bb = MESH_BOUNDS.get(mesh)!
+    kit.part(this.discRoot, "RangeRing_" + Math.round(r), mesh, mat, bb.min.add(bb.max).uniformScale(0.5).add(new vec3(0, 0.1, 0)), bb.max.sub(bb.min))
   }
 
   /** Blip start: real azimuth and ground distance at the moment the radar opens; from then on each blip moves on its own (see moveBlips). */

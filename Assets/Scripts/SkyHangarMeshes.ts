@@ -1,8 +1,9 @@
 // SkyHangarMeshes.ts
-// Owns: code-authored meshes (MeshBuilder) for the stylized models — a lathe (revolved profile) for
-// smooth fuselages, nacelles, cabins and dishes, and a tapered swept slab for wings/stabilisers/fins.
-// Meshes are unit-sized (fit their profile/plan box) and cached by key; PartKit.part() scales them.
+// Owns: code-authored meshes (MeshBuilder): the lathe (revolved profile) used by the radar disc, the inverted sky-dome
+// band, and the GeoBuilder -> RenderMesh bridge for the procedural models (SkyHangarModelGeo). Cached by key.
 // Expects: nothing. Must not: hold scene state.
+
+import {GeoBuilder, SLOT, V} from "./SkyHangarModelGeo"
 
 const cache: {[key: string]: RenderMesh} = {}
 
@@ -82,80 +83,53 @@ export function latheMesh(key: string, rings: number[][], segs: number = 18): Re
   return finish(b, k, verts)
 }
 
-/**
- * Tapered, swept slab in the XZ plane (span along +X from the root at x=0), thickness along Y.
- * rootChord, tipChord and sweep are fractions of the span; the mesh fits a unit box after scaling.
- */
-export function wingMesh(key: string, rootChord: number, tipChord: number, sweep: number, thickness: number, mirror: boolean): RenderMesh {
-  const k = "wing:" + key + (mirror ? ":m" : "")
+/** Flat filled polygon (any simple outline, x / y, z = 0) facing +Z, by ear clipping. Cached by key. */
+export function polygonMesh(key: string, outline: number[][]): RenderMesh {
+  const k = "poly:" + key
   if (cache[k]) return cache[k]
-  const b = newBuilder()
-  const s = mirror ? -1 : 1
-  const t = thickness / 2
-  // root: x=0, z from -rootChord/2 .. +rootChord/2; tip: x=1, z offset by sweep
-  const P = [
-    [0, -rootChord / 2], [0, rootChord / 2], [1, sweep + tipChord / 2], [1, sweep - tipChord / 2]
-  ].map((p) => [p[0] * s, p[1]])
-  const top = P.map((p) => [p[0], t, p[1]])
-  const bot = P.map((p) => [p[0], -t * 0.6, p[1]])
-  const verts: number[] = []
-  const idx: number[] = []
-  const quad = (a: number[], bb: number[], c: number[], d: number[], n: number[]) => {
-    const base = verts.length / 8
-    for (const v of [a, bb, c, d]) verts.push(v[0], v[1], v[2], n[0], n[1], n[2], 0, 0)
-    if (mirror) idx.push(base, base + 2, base + 1, base, base + 3, base + 2)
-    else idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
+  const pts = outline.slice()
+  let area2 = 0
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length]
+    area2 += a[0] * b[1] - b[0] * a[1]
   }
-  quad(top[0], top[1], top[2], top[3], [0, 1, 0])
-  quad(bot[3], bot[2], bot[1], bot[0], [0, -1, 0])
-  quad(bot[0], top[0], top[3], bot[3], [0, 0, -1]) // leading edge
-  quad(bot[1], bot[2], top[2], top[1], [0, 0, 1]) // trailing edge
-  quad(bot[3], top[3], top[2], bot[2], [s, 0, 0]) // tip
+  if (area2 < 0) pts.reverse() // counter-clockwise seen from +Z
+  const cr = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+  const inTri = (p: number[], a: number[], b: number[], c: number[]) => cr(a, b, p) >= -1e-9 && cr(b, c, p) >= -1e-9 && cr(c, a, p) >= -1e-9
+  const verts: number[] = []
+  for (const p of pts) verts.push(p[0], p[1], 0, 0, 0, 1, p[0] + 0.5, p[1] + 0.5)
+  const idx: number[] = []
+  const rest = pts.map((_, i) => i)
+  let guard = 0
+  while (rest.length > 3 && guard++ < 10000) {
+    let clipped = false
+    for (let i = 0; i < rest.length; i++) {
+      const ia = rest[(i + rest.length - 1) % rest.length], ib = rest[i], ic = rest[(i + 1) % rest.length]
+      if (cr(pts[ia], pts[ib], pts[ic]) <= 1e-12) continue // reflex or flat corner
+      if (rest.some((j) => j !== ia && j !== ib && j !== ic && inTri(pts[j], pts[ia], pts[ib], pts[ic]))) continue
+      idx.push(ia, ib, ic)
+      rest.splice(i, 1)
+      clipped = true
+      break
+    }
+    if (!clipped) break
+  }
+  if (rest.length === 3) idx.push(rest[0], rest[1], rest[2])
+  const b = newBuilder()
   b.appendVerticesInterleaved(verts)
   b.appendIndices(idx)
   return finish(b, k, verts)
 }
 
-/** Smooth airliner fuselage: rounded nose, straight cabin, tapered and up-swept tail cone. */
-export function fuselageRings(noseFrac: number, tailFrac: number, upsweep: number): number[][] {
-  const rings: number[][] = []
-  const N = 6
-  for (let i = 0; i <= N; i++) {
-    const u = i / N
-    const z = -0.5 + u * noseFrac
-    rings.push([z, 0.5 * Math.sqrt(Math.max(0.001, 1 - Math.pow(1 - u, 2))), 0])
-  }
-  for (let i = 1; i <= 3; i++) rings.push([-0.5 + noseFrac + (i / 3) * (1 - noseFrac - tailFrac), 0.5, 0])
-  const M = 7
-  for (let i = 1; i <= M; i++) {
-    const u = i / M
-    const z = 0.5 - tailFrac + u * tailFrac
-    rings.push([z, 0.5 * (1 - 0.82 * Math.pow(u, 1.25)), upsweep * Math.pow(u, 1.6)])
-  }
-  return rings
-}
-
-/** Teardrop cabin (helicopter): bulbous front, tapering back. */
-export function teardropRings(): number[][] {
-  const rings: number[][] = []
-  const N = 12
-  for (let i = 0; i <= N; i++) {
-    const u = i / N
-    const z = -0.5 + u
-    const r = u < 0.4 ? 0.5 * Math.sqrt(Math.max(0.001, 1 - Math.pow((0.4 - u) / 0.4, 2))) : 0.5 * (1 - 0.75 * Math.pow((u - 0.4) / 0.6, 1.4))
-    rings.push([z, Math.max(0.02, r), 0.08 * Math.pow(Math.max(0, u - 0.4) / 0.6, 1.5)])
-  }
-  return rings
-}
-
-/** Engine nacelle: inlet lip, body, short exhaust taper. */
-export function nacelleRings(): number[][] {
-  return [[-0.5, 0.38, 0], [-0.46, 0.5, 0], [-0.3, 0.5, 0], [0.2, 0.46, 0], [0.4, 0.36, 0], [0.5, 0.26, 0]]
-}
-
-/** Shallow dish (satellite antenna), open side toward -Z. */
-export function dishRings(): number[][] {
-  return [[-0.5, 0.5, 0], [-0.2, 0.42, 0], [0.1, 0.28, 0], [0.35, 0.12, 0], [0.5, 0.02, 0]]
+/** Mesh from a GeoBuilder's interleaved data (position, normal, palette uv); cached by key. Bounds are recorded exactly. */
+export function geoMesh(key: string, geo: GeoBuilder): RenderMesh {
+  const k = "geo:" + key
+  if (cache[k]) return cache[k]
+  const b = newBuilder()
+  const verts = geo.interleaved()
+  b.appendVerticesInterleaved(verts)
+  b.appendIndices(geo.idx)
+  return finish(b, k, verts)
 }
 
 /** Open band of a unit sphere between two elevations (radians), facing inward — for the backdrop sky dome. */
@@ -180,4 +154,22 @@ export function sphereBandMesh(key: string, e0: number, e1: number, segs: number
   b.appendVerticesInterleaved(verts)
   b.appendIndices(idx)
   return finish(b, k, verts)
+}
+
+/**
+ * One mesh for a whole ring of `n` boxes (instead of n objects): mid radius r, radial width w, height h. "xz" lies flat (up = +Y, seam at -Z like
+ * the radar rings), "xy" stands in the XY plane (thickness along Z). Cached by key; bounds recorded, so pass the mesh bounds size to PartKit.part.
+ */
+export function ringMesh(key: string, r: number, w: number, h: number, n: number, plane: "xz" | "xy"): RenderMesh {
+  const g = new GeoBuilder()
+  const len = ((Math.PI * 2 * r) / n) * 1.02
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2
+    const sa = Math.sin(a), ca = Math.cos(a)
+    const rad: V = plane === "xz" ? [sa, 0, -ca] : [ca, sa, 0]
+    const tan: V = plane === "xz" ? [ca, 0, sa] : [-sa, ca, 0]
+    const up: V = plane === "xz" ? [0, 1, 0] : [0, 0, 1]
+    g.obox([rad[0] * r, rad[1] * r, rad[2] * r], [tan[0] * len / 2, tan[1] * len / 2, tan[2] * len / 2], [up[0] * h / 2, up[1] * h / 2, up[2] * h / 2], [rad[0] * w / 2, rad[1] * w / 2, rad[2] * w / 2], SLOT.WHITE)
+  }
+  return geoMesh("ring:" + key, g)
 }

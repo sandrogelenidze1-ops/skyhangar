@@ -5,7 +5,7 @@
 import {findSceneObjectByName, nextFrame, sleep} from "Leaf.lspkg/Utils/common/Utils"
 import {SKY_OBJECTS} from "../../Scripts/SkyHangarFlightData"
 import {SkyHangarMain} from "../../Scripts/SkyHangarMain"
-import {Checks, InputKind, FLIGHTS, waitUntil, recordStates, findChild, collectBaseColors, hexToVec4, colorClose, fmtColor, fmtVec, quatAngleDeg} from "./SkyHangarTestKit"
+import {Checks, InputKind, FLIGHTS, waitUntil, recordStates, findChild, fmtVec, quatAngleDeg} from "./SkyHangarTestKit"
 
 export interface TrailSeg { pos: vec3; len: number; width: number; alpha: number }
 
@@ -58,22 +58,24 @@ export function cardRows(main: SkyHangarMain): string {
   return ["airline", "flight", "route", "times", "cities", "aircraft", "altSpeed"].map((r) => main.getCardText(r)).join(" | ")
 }
 
-/** Model under HeldModel exists, is enabled and uses the object's livery colours. */
+/** Model under HeldModel exists, is enabled and uses the shared palette material. */
 export function checkHeldModel(c: Checks, main: SkyHangarMain, id: string, input: InputKind): void {
   const holder = main.held.getModelObject()
   c.check("held model object exists and is enabled", input, !!holder && holder.isEnabledInHierarchy)
   if (!holder) return
   const model = findChild(holder, "Model_" + id)
   c.check(`3D model "Model_${id}" built under HeldModel`, input, !!model)
-  const info = infoOf(id)
-  if (model && info) {
-    const cols = collectBaseColors(model)
-    const p = hexToVec4(info.colors[0])
-    const s = hexToVec4(info.colors[1] ?? "#7FB2FF")
-    const hasP = cols.some((x) => colorClose(x, p))
-    const hasS = cols.some((x) => colorClose(x, s))
-    c.check(`model uses livery colours ${info.colors.join("/")}`, input, hasP && hasS,
-      `primary ${hasP ? "found" : "missing"}, secondary ${hasS ? "found" : "missing"}; first colours ${cols.slice(0, 3).map(fmtColor).join(" ")}`)
+  if (model) {
+    // Models are built by SkyHangarModelFactory: one merged body mesh + spinners, one shared palette-textured material.
+    const mats: Material[] = []
+    const walk = (o: SceneObject) => {
+      const r = o.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
+      if (r && r.mainMaterial) mats.push(r.mainMaterial)
+      for (let i = 0; i < o.getChildrenCount(); i++) walk(o.getChild(i))
+    }
+    walk(model)
+    c.check("model is a few merged meshes sharing one palette material", input,
+      mats.length >= 1 && mats.length <= 4 && mats.every((m) => m === mats[0]) && !!mats[0].mainPass.baseTex, `${mats.length} meshes`)
   }
 }
 

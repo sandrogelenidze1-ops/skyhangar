@@ -8,7 +8,7 @@
 import {SIK} from "SpectaclesInteractionKit.lspkg/SIK"
 import {Interactor, InteractorInputType} from "SpectaclesInteractionKit.lspkg/Core/Interactor/Interactor"
 import {SkyObjectInfo, SNAPSHOT_UTC} from "./SkyHangarFlightData"
-import {buildModel, styleFor} from "./SkyHangarModelFactory"
+import {buildModel, styleFor, fleetExamples, familyForInfo} from "./SkyHangarModelFactory"
 import {SkyHangarSkyController, PullRequest} from "./SkyHangarSkyController"
 import {SkyHangarHeldController, InspectHooks} from "./SkyHangarHeldController"
 import {SkyHangarShelfController, ShelfEntry, InspectRequest, ShelfTap} from "./SkyHangarShelfController"
@@ -302,7 +302,10 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   /** Panels are hidden by scale so UIKit / layout components keep their normal init order. */
   private setRootVisible(root: SceneObject, on: boolean): void {
+    // Once everything has started, a hidden panel is also disabled so its meshes cost no draw calls (disabling earlier would hold back OnStart).
+    if (on) root.enabled = true
     root.getTransform().setLocalScale(on ? vec3.one() : vec3.zero())
+    if (!on && this.ready) root.enabled = false
   }
 
   private onSkyTap(info: SkyObjectInfo): void {
@@ -426,7 +429,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   private plaqueLines(e: ShelfEntry): string[] {
     const info = e.info
     const head = info.kind === "satellite" ? info.airline + " · " + info.aircraftType + " · " + info.flight : info.airline + " · " + info.flight
-    const route = info.kind === "satellite" ? "Low Earth orbit" : info.kind === "helicopter" ? "Local flight · " + info.aircraftType : info.origin + " → " + info.destination
+    const route = info.kind === "satellite" ? "Low Earth orbit" : info.kind === "helicopter" ? "Local flight · " + info.aircraftType : !info.origin ? info.aircraftTypeName : info.origin + " → " + info.destination
     return [head, route, e.where + " · " + e.when]
   }
 
@@ -475,7 +478,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     const holder = makeObj(anchor, "CardModel_" + info.id)
     // Side view: model nose (-Z) turned to +X, a touch of top-down tilt so the silhouette reads.
     holder.getTransform().setLocalRotation(quat.angleAxis(0.18, vec3.right()).multiply(quat.angleAxis(-Math.PI / 2, vec3.up())))
-    buildModel(kit, holder, "CardImage_" + info.id, info.kind, info.kind === "satellite" ? 8 : 9.5, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType)
+    buildModel(kit, holder, "CardImage_" + info.id, info.kind, info.kind === "satellite" ? 8 : 9.5, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType, info.id, !info.airlineIcao)
   }
 
   private cardContent(i: SkyObjectInfo): CardContent {
@@ -550,10 +553,16 @@ export class SkyHangarMain extends BaseScriptComponent {
         this.shelf.add(info, this.collectedPlace, when, false)
         n++
       }
+      // Fleet examples: one real-type example of every model family not yet on the shelf, so the whole fleet is visible on first open.
+      const have: {[family: string]: boolean} = {}
+      for (const e of this.shelf.getEntries()) have[familyForInfo(e.info)] = true
+      for (const ex of fleetExamples(have)) this.shelf.add(ex, "Example model", "-", false)
       this.shelf.setPage(0)
       this.pushShelfView()
       this.lastCollectedText = ""
       this.ready = true
+      this.setRootVisible(this.radar.sceneObject, this.mode === "radar")
+      this.setRootVisible(this.shelf.sceneObject, this.mode === "hangar")
       this.log("ready: " + this.sky.getMarkerCount() + " sky objects, shelf " + this.shelf.getCount())
     }
 

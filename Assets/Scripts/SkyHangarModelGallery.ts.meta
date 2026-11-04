@@ -1,0 +1,75 @@
+- !<AssetImportMetadata/8ab77b90-73ac-4925-a125-38e9dc05fd56>
+  ImportedAssetIds:
+    TypeScriptAsset: !<reference> 8b4be65e-e75d-4664-96f5-d8f5b34ebf78
+  ImporterName: TypeScriptAssetImporter
+  PrimaryAsset: !<reference> 8b4be65e-e75d-4664-96f5-d8f5b34ebf78
+  PackageType: NotAPackage
+  LegacyPackagePolicy: ~
+  ExtraData:
+    {}
+  AssetDataMap:
+    TypeScriptAsset: !<own> 9de56ded-8315-46e9-8edb-db90effbe053
+  DependentFiles:
+    []
+  ImporterSettings: !<AssetImporterSettings>
+    {}
+  CompressionSettings: !<own> 00000000-0000-0000-0000-000000000000
+- !<TypeScriptAssetData/9de56ded-8315-46e9-8edb-db90effbe053>
+  SvgIcon: ""
+  SetupScript:
+    code: ""
+  Description: ""
+  VersionMajor: 0
+  VersionMinor: 0
+  VersionPatch: 0
+  VersionPrerelease: ""
+  UpdateOrder: 0
+  ComponentUid: 20ec76ac-01e4-4210-bb0e-569896c9e0d2
+  ExportUid: 00000000-0000-0000-0000-000000000000
+  PackagePolicy: CanBeUnpacked
+  ScriptInputsHidden:
+    cameraObject: false
+    cellCm: false
+    distanceCm: false
+    filter: false
+    rotorRevPerSec: false
+    showGallery: false
+    sky: false
+    spinRevPerSec: false
+    tiltDeg: false
+    yawDeg: false
+  ScriptTypesHidden:
+    {}
+  ReadMe: !<reference> 00000000-0000-0000-0000-000000000000
+  DeclarationFile: !<reference> 00000000-0000-0000-0000-000000000000
+  Tags:
+    []
+  Attachments:
+    []
+  DefaultScriptInputs:
+    - cameraObject: !<reference.SceneObject> 00000000-0000-0000-0000-000000000000
+      sky: !<MappingBased.AssignableType_1> 00000000-0000-0000-0000-000000000000
+      showGallery: false
+      spinRevPerSec: 0.080000
+      yawDeg: !<float> 0.000000
+      tiltDeg: !<float> 20.000000
+      rotorRevPerSec: 1.200000
+      filter: ""
+      distanceCm: !<float> 110.000000
+      cellCm: !<float> 15.000000
+  ScriptTypes:
+    -
+      {}
+  InputLines:
+    - '// @ui {"widget":"label", "label":"<span style=\"color: #60A5FA;\">SkyHangarModelGallery – model review grid</span>"}'
+    - '// @ui {"widget":"separator"}'
+    - '// @input SceneObject cameraObject {"hint":"Camera SceneObject (the gallery is placed in front of it when shown)"}'
+    - '// @input AssignableType_1 sky {"hint":"Sky controller (provides the shared PartKit)"}'
+    - '// @input bool showGallery {"hint":"Tick to show the gallery of every model; untick to hide it"}'
+    - '// @input float spinRevPerSec = 0.08 {"hint":"Slow turntable spin (revolutions per second); 0 freezes the yaw"}'
+    - "// @input float yawDeg {\"hint\":\"Static yaw in degrees when spin is 0 (0 = nose toward the viewer's left, 180 = rear view)\"}"
+    - '// @input float tiltDeg = 20 {"hint":"Pitch in degrees: 0 = side-on, 90 = top view, 30 = three-quarter from above"}'
+    - '// @input float rotorRevPerSec = 1.2 {"hint":"Rotor revolutions per second (>= 3 also shows the blur discs)"}'
+    - '// @input string filter {"hint":"Only show entries whose label contains this text (empty = all); the cells grow to fill the view"}'
+    - '// @input float distanceCm = 110 {"hint":"Distance in front of the camera, cm"}'
+    - '// @input float cellCm = 15 {"hint":"Grid cell size, cm (models are scaled to fit)"}'

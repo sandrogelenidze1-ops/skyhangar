@@ -85,6 +85,7 @@ const GLIDE_END_SPEED = 0.35
 const VIEW_OFFSET = new vec3(0, -2, -40)
 const VIEW_DISTANCE_CM = 40
 const VIEW_TURN_RAD_PER_S = 0.5
+const SAT_TILT_RAD = 40 * DEG // held / inspected satellites lean their flat panel face toward the viewer
 /** Render order above the pad band (pad glass, glow and icon all sit in UI_RENDER_ORDER + a few). */
 const HELD_MODEL_ORDER = 400
 const PAD_OFFSET_HANGAR = new vec3(-16, -5, -80)
@@ -173,6 +174,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private yawAtPull = 0
   private spinYaw = 0
   private spinTarget = 0
+  private satTilt = 0 // 0..1 ease of the satellite pitch toward the viewer
   private samples: {pos: vec3; time: number}[] = []
   private throwVel = vec3.zero()
   private throwPos = vec3.zero()
@@ -258,7 +260,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (sph) { const sh = Shape.createSphereShape(); sh.radius = this.modelSpanCm * 0.55; sph.shape = sh }
     this.yawAtPull = this.camYaw()
     const visual = makeObj(this.holder, "HeldVisual")
-    this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType)
+    this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType, info.id, !info.airlineIcao)
     setRenderOrderTree(visual, UI_RENDER_ORDER + HELD_MODEL_ORDER) // layering: pad, then pad icon, then the model on top
     this.holder.enabled = true
     this.fromPos = fromWorld
@@ -266,6 +268,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.t = 0
     this.spinYaw = 0
     this.spinTarget = 0
+    this.satTilt = 0
     this.setState("flyingIn")
     this._onPulled.invoke(info)
   }
@@ -551,6 +554,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.model = null
     this.fadeMats = []
     this.rotBlend = 0
+    this.satTilt = 0
     this.state = "none"
     this.inspect = null
     this.viewOrigin = ""
@@ -955,8 +959,14 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (!visual) return
     this.spinYaw += (this.spinTarget - this.spinYaw) * (dt > 0 ? clamp01(dt * 8) : 1)
     const base = yawRotation(this.yawAtPull + 2.4 + this.spinYaw)
-    const tilt = quat.angleAxis(0.25, vec3.right())
-    const target = base.multiply(tilt)
+    let target: quat
+    if (this.info && this.info.kind === "satellite") {
+      // pitch the whole model so its panel face (+Y) leans toward the user; the slow spin stays about the model's own axis (inside the model)
+      if (dt > 0) this.satTilt += (1 - this.satTilt) * clamp01(dt * 3)
+      const a = SAT_TILT_RAD * this.satTilt
+      const toUser = flatForward(this.yawAtPull).uniformScale(-1)
+      target = quat.rotationFromTo(vec3.up(), vec3.up().uniformScale(Math.cos(a)).add(toUser.uniformScale(Math.sin(a)))).multiply(base)
+    } else target = base.multiply(quat.angleAxis(0.25, vec3.right()))
     const vt = visual.getTransform()
     if (this.rotBlend > 0 && dt > 0) {
       this.rotBlend -= dt
