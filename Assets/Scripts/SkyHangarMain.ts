@@ -478,7 +478,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     const holder = makeObj(anchor, "CardModel_" + info.id)
     // Side view: model nose (-Z) turned to +X, a touch of top-down tilt so the silhouette reads.
     holder.getTransform().setLocalRotation(quat.angleAxis(0.18, vec3.right()).multiply(quat.angleAxis(-Math.PI / 2, vec3.up())))
-    buildModel(kit, holder, "CardImage_" + info.id, info.kind, info.kind === "satellite" ? 8 : 9.5, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType, info.id, !info.airlineIcao)
+    buildModel(kit, holder, "CardImage_" + info.id, info.kind, info.kind === "satellite" ? 8 : 9.5, styleFor(info.colors, info.kind, true, info.airlineIcao || info.id), info.aircraftType, info.id, !info.airlineIcao)
   }
 
   private cardContent(i: SkyObjectInfo): CardContent {

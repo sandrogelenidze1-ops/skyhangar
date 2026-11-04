@@ -260,7 +260,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     if (sph) { const sh = Shape.createSphereShape(); sh.radius = this.modelSpanCm * 0.55; sph.shape = sh }
     this.yawAtPull = this.camYaw()
     const visual = makeObj(this.holder, "HeldVisual")
-    this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao), info.aircraftType, info.id, !info.airlineIcao)
+    this.model = buildModel(this.kit, visual, "Model_" + info.id, info.kind, this.modelSpanCm, styleFor(info.colors, info.kind, true, info.airlineIcao || info.id), info.aircraftType, info.id, !info.airlineIcao)
     setRenderOrderTree(visual, UI_RENDER_ORDER + HELD_MODEL_ORDER) // layering: pad, then pad icon, then the model on top
     this.holder.enabled = true
     this.fromPos = fromWorld

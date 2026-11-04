@@ -352,7 +352,7 @@ export class SkyHangarShelfController extends BaseScriptComponent {
       s.entry = e
       s.obj.enabled = !!e
       if (e) {
-        s.model = buildModel(kit, s.holder, "ShelfModel_" + e.info.id, e.info.kind, this.modelSpanCm, styleFor(e.info.colors, e.info.kind, true, e.info.airlineIcao), e.info.aircraftType, e.info.id, !e.info.airlineIcao)
+        s.model = buildModel(kit, s.holder, "ShelfModel_" + e.info.id, e.info.kind, this.modelSpanCm, styleFor(e.info.colors, e.info.kind, true, e.info.airlineIcao || e.info.id), e.info.aircraftType, e.info.id, !e.info.airlineIcao)
         s.model.root.getTransform().setLocalRotation(quat.angleAxis(0.6 + i * 0.4, vec3.up()))
         s.model.root.enabled = e.info.id !== this.hiddenId
       }

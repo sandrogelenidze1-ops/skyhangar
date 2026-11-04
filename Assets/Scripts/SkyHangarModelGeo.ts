@@ -9,9 +9,9 @@
 
 export type V = [number, number, number]
 
-/** Palette slots shared by every model (the factory fills them from the airline / kind colours). */
-export const SLOT = {PRIMARY: 0, SECONDARY: 1, GLASS: 2, METAL: 3, DARK: 4, FOIL: 5, WHITE: 6, CELL: 7, CLEAR: 8, GRID: 9}
-export const PALETTE_SLOTS = 10
+/** Palette slots shared by every model (the factory fills them from the livery / kind colours). PRIMARY = upper body, SECONDARY = tail fin (helicopters: stripe), BELLY = lower body, ACCENT = cheatline / tail decals, NACELLE / WINGLET / REAR / WING = coloured parts. */
+export const SLOT = {PRIMARY: 0, SECONDARY: 1, GLASS: 2, METAL: 3, DARK: 4, FOIL: 5, WHITE: 6, CELL: 7, CLEAR: 8, GRID: 9, BELLY: 10, ACCENT: 11, NACELLE: 12, WINGLET: 13, REAR: 14, WING: 15}
+export const PALETTE_SLOTS = 16
 /** Palette texture layout: PALETTE_SLOTS cells of CELL_PX wide, GRAD_PX shade rows. */
 export const CELL_PX = 8
 export const GRAD_PX = 16
@@ -48,6 +48,8 @@ export interface LoftOpts {
   /** Cap slot at the first / last ring, or -1 for open. */
   capStart?: number
   capEnd?: number
+  /** Palette slot per side quad (row i between rings i and i+1, quad j between ring points j and j+1): lets a ring change colour round its circumference. */
+  quadSlot?: (i: number, j: number) => number
 }
 
 export class GeoBuilder {
@@ -131,6 +133,21 @@ export class GeoBuilder {
     }))
     for (let i = 0; i < nR - 1; i++) {
       const sl = o.rowSlots && o.rowSlots[i] !== undefined ? o.rowSlots[i] : slot
+      if (o.quadSlot && !(o.rowSlots && o.rowSlots[i] !== undefined)) {
+        const m0 = new Map<number, number>(), m1 = new Map<number, number>()
+        const get = (m: Map<number, number>, ring: number, jj: number, sq: number): number => {
+          const key = jj * 64 + sq
+          let id = m.get(key)
+          if (id === undefined) { id = this.vtx(P[ring][jj], N[ring][jj], sq); m.set(key, id) }
+          return id
+        }
+        for (let j = 0; j < sides; j++) {
+          const j1 = (j + 1) % sides, sq = o.quadSlot(i, j)
+          this.tri(get(m0, i, j, sq), get(m0, i, j1, sq), get(m1, i + 1, j1, sq))
+          this.tri(get(m0, i, j, sq), get(m1, i + 1, j1, sq), get(m1, i + 1, j, sq))
+        }
+        continue
+      }
       const a0: number[] = [], a1: number[] = []
       for (let j = 0; j < sides; j++) {
         a0.push(this.vtx(P[i][j], N[i][j], sl))
@@ -266,6 +283,22 @@ export interface ModelGeo {
   glazing?: {kind: string; minGap: number; maxGap: number; panels: number; inward: number}[]
 }
 
+/** Structural livery options (colours come from the palette): decal geometry that differs between liveries. */
+export interface LiveryGeo {
+  /** Cheatline under the windows: 0 none, 1 thin, 2 thick. */
+  cheat: 0 | 1 | 2
+  /** Two-tone hull: BELLY colour below the midline. */
+  split: boolean
+  /** Wide accent band along the belly. */
+  belly: boolean
+  tailDeco: "none" | "diag" | "swoosh" | "tip" | "band"
+  /** Rear fuselage block in the REAR colour. */
+  rear: boolean
+  /** Helicopters: side stripe along the cabin in the SECONDARY colour. */
+  stripe: boolean
+}
+export const PLAIN_LIVERY: LiveryGeo = {cheat: 1, split: false, belly: false, tailDeco: "none", rear: false, stripe: false}
+
 export type AirlinerFamily = "narrowbody" | "widebody" | "largeWidebody" | "jumbo" | "superjumbo" | "regional" | "turboprop" | "bizSmall" | "bizLarge"
 export type HeliFamily = "lightPiston" | "lightTurbine" | "mediumTwin" | "largeTransport" | "tandem"
 export type SatFamily = "cubesat" | "comms" | "flatpanel" | "station"
@@ -379,7 +412,7 @@ export function noseRadiusRatio(t: number): number {
   return (2 * s3 - 3 * s2 + 1) * K[i][1] + (s3 - 2 * s2 + s) * h * m[i] + (-2 * s3 + 3 * s2) * K[i + 1][1] + (s3 - s2) * h * m[i + 1]
 }
 
-function airlinerGeo(fam: string): ModelGeo {
+function airlinerGeo(fam: string, lg: LiveryGeo): ModelGeo {
   const P = AIR[fam]
   const g = new GeoBuilder()
   const D = P.D, R = D / 2
@@ -420,7 +453,15 @@ function airlinerGeo(fam: string): ModelGeo {
   for (const s of [0.2, 0.42, 0.65, 0.85, 1]) us.push(tailStart + s * P.tail)
   us.sort((a, b) => a - b)
   const uniq = us.filter((u, i) => i === 0 || u - us[i - 1] > 1e-4)
-  g.loft(uniq.map(fusSec), SLOT.PRIMARY, {sides: 24, capStart: SLOT.METAL, capEnd: SLOT.PRIMARY, rowSlots: [SLOT.METAL]}) // first row = the tiny radome cap
+  // Livery colours round the hull: upper body, a lower (belly) colour below -30 deg when the livery is two-tone, and a coloured rear fuselage block.
+  const SIDES = 24
+  const rearU = tailStart + 0.4 * P.tail
+  const quadSlot = (i: number, j: number): number => {
+    if (lg.rear && (uniq[i] + uniq[i + 1]) / 2 >= rearU) return SLOT.REAR
+    const mid = (j + 0.5) / SIDES * 360
+    return lg.split && mid > 210 && mid < 330 ? SLOT.BELLY : SLOT.PRIMARY
+  }
+  g.loft(uniq.map(fusSec), SLOT.PRIMARY, {sides: SIDES, capStart: SLOT.METAL, capEnd: lg.rear ? SLOT.REAR : SLOT.PRIMARY, rowSlots: [SLOT.METAL], quadSlot}) // first row = the tiny radome cap
 
   // surface patches ride on the fuselage; `rows` give (u, angle range) so a patch can slope
   const patch = (rows: [number, number, number][], cols: number, slot: number, lift: number) => {
@@ -510,10 +551,11 @@ function airlinerGeo(fam: string): ModelGeo {
       strip(du + w - t1, du + w, f2(side, aLo), f2(side, aHi), SLOT.METAL, 1.02, 1)
     }
     // livery cheatline just under the windows
-    strip(1.9 * D, tailStart + P.tail * 0.5, sideA(side, WIN_A - 0.3), sideA(side, WIN_A - 0.17), SLOT.SECONDARY, 1.012, 8)
+    if (lg.cheat > 0) strip(1.9 * D, tailStart + P.tail * 0.5, sideA(side, WIN_A - (lg.cheat === 2 ? 0.36 : 0.3)), sideA(side, WIN_A - (lg.cheat === 2 ? 0.12 : 0.17)), SLOT.ACCENT, 1.012, 8)
   }
   // thin belly line
-  strip(nose + 0.5 * D, tailStart, -Math.PI / 2 - 0.05, -Math.PI / 2 + 0.05, SLOT.DARK, 1.012, 6)
+  if (lg.belly) strip(nose + 0.5 * D, tailStart + 0.3 * P.tail, -Math.PI / 2 - 0.5, -Math.PI / 2 + 0.5, SLOT.ACCENT, 1.012, 8) // belly band
+  else strip(nose + 0.5 * D, tailStart, -Math.PI / 2 - 0.05, -Math.PI / 2 + 0.05, SLOT.DARK, 1.012, 6)
   if (P.deck) {
     const ua = P.deck === 2 ? 0.58 : 0.5
     for (const side of [0, 1]) {
@@ -540,8 +582,8 @@ function airlinerGeo(fam: string): ModelGeo {
   const wingLEAt = (x: number) => zLE0 + swp * ((x - x0) / (tipX - x0))
   const wingHalfThAt = (x: number) => (th / 2) * lerp(1, 0.55, (x - x0) / (tipX - x0))
   for (const sgn of [-1, 1]) {
-    const st = surface(g, sgn, x0, tipX, wy0, P.dih, zLE0, swp, P.root, P.tip, th, SLOT.PRIMARY)
-    if (P.winglet) winglet(g, sgn, st.c, st.chord, P.winglet, SLOT.SECONDARY)
+    const st = surface(g, sgn, x0, tipX, wy0, P.dih, zLE0, swp, P.root, P.tip, th, SLOT.WING)
+    if (P.winglet) winglet(g, sgn, st.c, st.chord, P.winglet, SLOT.WINGLET)
     // flap-track fairings: small pods hanging behind the trailing edge
     for (const fr of [0.3, 0.55, 0.78]) {
       const x = x0 + fr * (tipX - x0)
@@ -558,7 +600,7 @@ function airlinerGeo(fam: string): ModelGeo {
       const e = Math.pow(Math.sin(Math.PI * t), 0.6)
       return mk([0, fy, zAt(P.wingMid) + (t - 0.5) * 2 * La], X, Y, R * (0.1 + 0.88 * e), R * (0.06 + 0.36 * e))
     })
-    g.loft(secs, SLOT.PRIMARY, {sides: 12})
+    g.loft(secs, P.high ? SLOT.PRIMARY : SLOT.BELLY, {sides: 12})
   }
 
   // --- engines ---
@@ -572,11 +614,11 @@ function airlinerGeo(fam: string): ModelGeo {
         const wy1 = wingYAt(ex)
         const ey = P.eng === "prop" ? wy1 - wingHalfThAt(ex) - eR * 0.55 : wy1 - wingHalfThAt(ex) - eR * 0.3 - eR * 1.07
         const ez = wingLEAt(ex) - eL * (P.eng === "prop" ? 0.5 : 0.62)
-        nacelle(g, [sgn * ex, ey, ez], eR, eL, SLOT.PRIMARY, P.eng === "prop" ? SLOT.PRIMARY : SLOT.METAL, P.eng === "prop" ? 10 : 12)
+        nacelle(g, [sgn * ex, ey, ez], eR, eL, SLOT.NACELLE, P.eng === "prop" ? SLOT.NACELLE : SLOT.METAL, P.eng === "prop" ? 10 : 12)
         if (P.eng === "wing") {
           const top = ey + eR * 1.05
           const zA = ez + eL * 0.3, zB = wingLEAt(ex) + 0.05
-          g.box([sgn * ex, (top + wy1) / 2, (zA + zB) / 2], 0.0045, (wy1 - top) / 2 + 0.0008, (zB - zA) / 2, SLOT.PRIMARY)
+          g.box([sgn * ex, (top + wy1) / 2, (zA + zB) / 2], 0.0045, (wy1 - top) / 2 + 0.0008, (zB - zA) / 2, SLOT.WING)
         } else {
           g.loft([mk([sgn * ex, ey, ez - 0.01], X, Y, 0.003, 0.003), mk([sgn * ex, ey, ez + 0.004], X, Y, eR * 0.8, eR * 0.8), mk([sgn * ex, ey, ez + 0.02], X, Y, eR, eR)], SLOT.METAL, {sides: 8, capStart: SLOT.METAL})
           const pg = new GeoBuilder()
@@ -597,8 +639,8 @@ function airlinerGeo(fam: string): ModelGeo {
     const ey = fusSec(tailStart + 0.03).c[1] + R * 0.35
     const ex = fusSec(tailStart + 0.03).ru + eR * 1.12 + 0.005
     for (const sgn of [-1, 1]) {
-      nacelle(g, [sgn * ex, ey, ez], eR, eL, SLOT.PRIMARY, SLOT.METAL, 10)
-      g.box([sgn * (ex + R * 0.7) / 2, ey, ez + eL * 0.55], (ex - R * 0.7) / 2 + 0.002, 0.006, eL * 0.3, SLOT.PRIMARY)
+      nacelle(g, [sgn * ex, ey, ez], eR, eL, SLOT.NACELLE, SLOT.METAL, 10)
+      g.box([sgn * (ex + R * 0.7) / 2, ey, ez + eL * 0.55], (ex - R * 0.7) / 2 + 0.002, 0.006, eL * 0.3, SLOT.NACELLE)
     }
   }
 
@@ -614,19 +656,45 @@ function airlinerGeo(fam: string): ModelGeo {
   const finSw = TAN(35) * finHs
   const finLE = zAt(0.985) - finRoot - finSw * 0.35
   const finThick = (ch: number) => 0.042 * ch
-  const finSecs: Sec[] = [0, 0.5, 1].map((t) => {
+  const finTs = [0, 0.5, 0.82, 1]
+  const finSec = (t: number): Sec => {
     const ch = lerp(finRoot, finTipCh, t)
     return mk([0, finY0 + finHs * t, finLE + finSw * t + ch / 2], Z, X, ch / 2, finThick(ch))
-  })
-  const fl = finSecs[2]
+  }
+  const finSecs: Sec[] = finTs.map(finSec)
+  const fl = finSecs[finSecs.length - 1]
   for (const a of [30, 55, 75, 88]) {
     const sn = Math.sin(a * DEG2), cs = Math.cos(a * DEG2)
     finSecs.push(mk([0, fl.c[1] + finRound * sn, fl.c[2]], Z, X, fl.ru * cs, fl.rv * cs))
   }
-  g.loft(finSecs, SLOT.SECONDARY, {sides: 8, capEnd: SLOT.SECONDARY})
+  // rows: 0 root..0.5, 1 0.5..0.82, 2 0.82..1, then the rounded cap rows; the tip livery colours the last rows
+  const finTip = lg.tailDeco === "tip"
+  g.loft(finSecs, SLOT.SECONDARY, {sides: 8, capEnd: finTip ? SLOT.ACCENT : SLOT.SECONDARY, rowSlots: finTip ? [SLOT.SECONDARY, SLOT.SECONDARY, SLOT.ACCENT, SLOT.ACCENT, SLOT.ACCENT, SLOT.ACCENT, SLOT.ACCENT] : undefined})
+  // fin decals: flat bands lying on both faces of the fin (chord fraction g measured from the leading edge)
+  const finDecal = (tOf: (k: number) => number, g0: (t: number) => number, g1: (t: number) => number, rows: number) => {
+    for (const side of [1, -1]) {
+      const pts: V[][] = [], ns: V[][] = []
+      for (let k = 0; k <= rows; k++) {
+        const t = tOf(k / rows), sec = finSec(t)
+        const row: V[] = [], nr: V[] = []
+        for (const gg of [g0(t), g1(t)]) {
+          const a = Math.acos(clamp(2 * gg - 1, -1, 1)) * side
+          const n = GeoBuilder.surfaceNormal(sec, a)
+          row.push(add(GeoBuilder.surfacePoint(sec, a, 1), mul(n, 0.0004))); nr.push(n)
+        }
+        pts.push(row); ns.push(nr)
+      }
+      g.grid(pts, ns, SLOT.ACCENT)
+    }
+  }
+  if (lg.tailDeco === "diag") finDecal((k) => lerp(0.04, 0.96, k), (t) => clamp(0.78 - 0.7 * t, 0.03, 0.95), (t) => clamp(1.04 - 0.7 * t, 0.08, 0.99), 10)
+  else if (lg.tailDeco === "swoosh") {
+    // a curved band that rises from the trailing edge at the root and sweeps to the leading edge halfway up, thinning as it goes
+    finDecal((k) => lerp(0.04, 0.62, k), (t) => clamp(0.88 - 1.0 * Math.pow(t / 0.62, 0.8) * 0.7, 0.05, 0.95), (t) => clamp(1.0 - 1.0 * Math.pow(t / 0.62, 0.8) * 0.7 - 0.06 * (1 - t / 0.62), 0.06, 0.99), 12)
+  } else if (lg.tailDeco === "band") finDecal((k) => lerp(0.38, 0.56, k), () => 0.04, () => 0.96, 2)
   const stabY = P.tTail ? finTop + 0.001 : tailAt.c[1] + 0.003
   const stabLE = P.tTail ? finLE + finSw - 0.01 : zAt(0.985) - P.stabRoot - TAN(33) * P.stabHalf * 0.3
-  for (const sgn of [-1, 1]) surface(g, sgn, 0.004, P.stabHalf, stabY, 0.008, stabLE, TAN(33) * P.stabHalf, P.stabRoot, P.stabTip, 0.012, SLOT.PRIMARY)
+  for (const sgn of [-1, 1]) surface(g, sgn, 0.004, P.stabHalf, stabY, 0.008, stabLE, TAN(33) * P.stabHalf, P.stabRoot, P.stabTip, 0.012, SLOT.WING)
 
   // fit: wingspan (~0.95 L) -> model span * scale
   const k = P.scale / (2 * (tipX + outerLoss + 0.0075))
@@ -662,7 +730,7 @@ function rotorGeo(blades: number, dia: number, chord: number, hubR: number): Geo
 
 interface PodRow {z: number; w: number; h: number; cy: number}
 
-function heliGeo(fam: HeliFamily): ModelGeo {
+function heliGeo(fam: HeliFamily, lg: LiveryGeo): ModelGeo {
   const g = new GeoBuilder()
   const spins: SpinPart[] = []
   const rows = (zs: number[][]): PodRow[] => zs.map(([z, w, h, cy]) => ({z, w, h, cy}))
@@ -771,14 +839,32 @@ function heliGeo(fam: HeliFamily): ModelGeo {
       }
       emit("side", sp, sn, sc, (p) => fn(p[2]).c)
     }
+    // livery stripe: a band along each side of the cabin below the window (22..34 % of the cabin height), in the SECONDARY colour
+    if (lg.stripe) {
+      for (const side of [0, 1]) {
+        const pts: V[][] = [], ns: V[][] = []
+        for (let r = 0; r <= 10; r++) {
+          const z = lerp(z0 + 0.2 * Lc, cabinEnd, r / 10)
+          const s0 = fn(z)
+          const row: V[] = [], nr: V[] = []
+          for (let c = 0; c <= 2; c++) {
+            const a = angleAt(s0, yAt(lerp(0.22, 0.34, c / 2)), side === 0 ? 1 : -1)
+            const n = GeoBuilder.surfaceNormal(s0, a)
+            row.push(add(GeoBuilder.surfacePoint(s0, a, 1), mul(n, 0.0007 + 0.006 * s0.ru))); nr.push(n)
+          }
+          pts.push(row); ns.push(nr)
+        }
+        g.grid(pts, ns, SLOT.SECONDARY)
+      }
+    }
   }
   const skids = (xs: number, ys: number, z0: number, z1: number, struts: number[], h: number) => {
     for (const sgn of [-1, 1]) {
-      g.tube([sgn * xs, ys, z0 + 0.035], [sgn * xs, ys, z1], 0.0042, 0.0042, SLOT.METAL, 6, SLOT.METAL)
-      g.tube([sgn * xs, ys, z0 + 0.035], [sgn * xs, ys + 0.016, z0], 0.0042, 0.0042, SLOT.METAL, 6, SLOT.METAL)
-      for (const sz of struts) g.tube([sgn * xs, ys, sz], [sgn * xs * 0.62, ys + h, sz], 0.0036, 0.0036, SLOT.METAL, 6)
+      g.tube([sgn * xs, ys, z0 + 0.035], [sgn * xs, ys, z1], 0.0042, 0.0042, SLOT.DARK, 6, SLOT.DARK)
+      g.tube([sgn * xs, ys, z0 + 0.035], [sgn * xs, ys + 0.016, z0], 0.0042, 0.0042, SLOT.DARK, 6, SLOT.DARK)
+      for (const sz of struts) g.tube([sgn * xs, ys, sz], [sgn * xs * 0.62, ys + h, sz], 0.0036, 0.0036, SLOT.DARK, 6)
     }
-    for (const sz of struts) g.tube([-xs * 0.93, ys + h * 0.22, sz], [xs * 0.93, ys + h * 0.22, sz], 0.0034, 0.0034, SLOT.METAL, 6, SLOT.METAL)
+    for (const sz of struts) g.tube([-xs * 0.93, ys + h * 0.22, sz], [xs * 0.93, ys + h * 0.22, sz], 0.0034, 0.0034, SLOT.DARK, 6, SLOT.DARK)
   }
   const mast = (x: number, y0: number, y1: number, z: number, r: number, hubR: number, blades: number, dia: number, chord: number) => {
     g.tube([x, y0, z], [x, y1, z], r, r * 0.85, SLOT.METAL, 8, SLOT.METAL)
@@ -1017,10 +1103,10 @@ function satGeo(fam: SatFamily): ModelGeo {
   return {body: g, spins, bodySpin: true}
 }
 
-export function buildGeo(fam: ModelFamily): ModelGeo {
+export function buildGeo(fam: ModelFamily, lg: LiveryGeo = PLAIN_LIVERY): ModelGeo {
   switch (fam) {
-    case "lightPiston": case "lightTurbine": case "mediumTwin": case "largeTransport": case "tandem": return heliGeo(fam)
+    case "lightPiston": case "lightTurbine": case "mediumTwin": case "largeTransport": case "tandem": return heliGeo(fam, lg)
     case "cubesat": case "comms": case "flatpanel": case "station": return satGeo(fam)
-    default: return airlinerGeo(fam)
+    default: return airlinerGeo(fam, lg)
   }
 }

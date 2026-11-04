@@ -129,7 +129,7 @@ export class SkyHangarModelGallery extends BaseScriptComponent {
       cell.getTransform().setLocalPosition(new vec3((col - (cols - 1) / 2) * cellCm, ((rows - 1) / 2 - row) * cellCm * 1.15, 0))
       const holder = makeObj(cell, "Turntable")
       const span = cellCm * (e.kind === "helicopter" ? 0.78 : 0.82)
-      const m = buildModel(kit, holder, "Gallery_" + e.type, e.kind, span, styleFor([], e.kind, true, "BAW"), e.type)
+      const m = buildModel(kit, holder, "Gallery_" + e.type, e.kind, span, styleFor([], e.kind, true, e.type), e.type)
       this.models.push(m)
       this.holders.push(holder)
       tris += m.tris

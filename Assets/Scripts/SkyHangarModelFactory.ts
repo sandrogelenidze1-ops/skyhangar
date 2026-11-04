@@ -10,12 +10,13 @@
 // Expects: a PartKit (its lit material is cloned per palette). Must not: own any interaction or state.
 
 import {SkyKind, SkyObjectInfo} from "./SkyHangarFlightData"
-import {PartKit, makeObj} from "./SkyHangarUtil"
+import {PartKit, makeObj, minLuminance, editorTone, luminanceFloor} from "./SkyHangarUtil"
 import {geoMesh} from "./SkyHangarMeshes"
 import {
   AirlinerFamily, HeliFamily, SatFamily, ModelFamily, ModelGeo, SpinAxis, SpinPart, GeoBuilder, buildGeo,
-  CELL_PX, GRAD_PX, PALETTE_SLOTS, SLOT, SHADE_BELLY, SHADE_TOP
+  CELL_PX, GRAD_PX, PALETTE_SLOTS, SLOT, SHADE_BELLY, SHADE_TOP, LiveryGeo, PLAIN_LIVERY
 } from "./SkyHangarModelGeo"
+import {RGB, liveryFor, heliLookFor, liveryGeoKey, HELI_DARK, HELI_METAL} from "./SkyHangarLiveries"
 
 export type {AirlinerFamily, HeliFamily, SatFamily, ModelFamily}
 
@@ -48,6 +49,8 @@ export interface ModelStyle {
   primary: vec4
   secondary: vec4
   lit: boolean
+  /** Airline string (or flight id when there is none): picks the airliner livery. */
+  key?: string
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -198,10 +201,41 @@ function hash(s: string): number {
  * colours are not used. Helicopters get a warm amber accent, satellites silver + cyan panels.
  */
 export function styleFor(_colors: string[], kind: SkyKind, lit: boolean, airlineKey?: string): ModelStyle {
-  if (kind === "helicopter") return {primary: new vec4(0.93, 0.92, 0.9, 1), secondary: new vec4(1.0, 0.72, 0.32, 1), lit}
-  if (kind === "satellite") return {primary: new vec4(0.86, 0.88, 0.92, 1), secondary: new vec4(0.3, 0.72, 0.95, 1), lit}
-  const accent = ACCENTS[hash(airlineKey && airlineKey.length ? airlineKey : "generic") % ACCENTS.length]
-  return {primary: BODY_WHITE, secondary: accent, lit}
+  const key = airlineKey && airlineKey.length ? airlineKey : "generic"
+  if (kind === "helicopter") return {primary: new vec4(0.93, 0.92, 0.9, 1), secondary: new vec4(1.0, 0.72, 0.32, 1), lit, key}
+  if (kind === "satellite") return {primary: new vec4(0.86, 0.88, 0.92, 1), secondary: new vec4(0.3, 0.72, 0.95, 1), lit, key}
+  const accent = ACCENTS[hash(key) % ACCENTS.length]
+  return {primary: BODY_WHITE, secondary: accent, lit, key}
+}
+
+/** Lowest luminance of a model colour: the night floor of the backdrop (the display is additive, near-black reads as see-through). */
+const MODEL_FLOOR = luminanceFloor([0, 0, 1]) + 0.04
+/** Planes: raise a livery colour to the floor, hue kept. */
+const lift = (c: RGB): vec4 => { const o = minLuminance(c, MODEL_FLOOR); return new vec4(o[0], o[1], o[2], 1) }
+/** Helicopters: the scene's editor tone, then the floor (so dark paint stays just above it instead of going see-through). */
+const toned = (c: RGB): vec4 => { const o = minLuminance(editorTone(c), MODEL_FLOOR); return new vec4(o[0], o[1], o[2], 1) }
+
+/** What a model looks like: the full palette (or null = the style's own colours) and the decal geometry. */
+interface Look {pal: vec4[] | null; geo: LiveryGeo}
+
+function lookFor(family: ModelFamily, style: ModelStyle, id: string | undefined, kind: SkyKind): Look {
+  if (kind === "helicopter") {
+    const hl = heliLookFor(id ?? style.key ?? "heli")
+    const c = paletteColors(style)
+    c[SLOT.PRIMARY] = toned(hl.body)
+    c[SLOT.SECONDARY] = hl.stripe ? toned(hl.stripe) : c[SLOT.PRIMARY]
+    c[SLOT.DARK] = toned(HELI_DARK)
+    c[SLOT.METAL] = toned(HELI_METAL)
+    return {pal: c, geo: {...PLAIN_LIVERY, cheat: 0, stripe: !!hl.stripe}}
+  }
+  if (kind === "plane") {
+    const lv = liveryFor(family, style.key && style.key !== "generic" ? style.key : "", id ?? "")
+    const c = paletteColors(style)
+    c[SLOT.PRIMARY] = lift(lv.body); c[SLOT.SECONDARY] = lift(lv.tail); c[SLOT.BELLY] = lift(lv.belly); c[SLOT.ACCENT] = lift(lv.accent)
+    c[SLOT.NACELLE] = lift(lv.engine); c[SLOT.WINGLET] = lift(lv.winglet); c[SLOT.REAR] = lift(lv.rear); c[SLOT.WING] = lift(lv.wing)
+    return {pal: c, geo: lv.geo}
+  }
+  return {pal: null, geo: PLAIN_LIVERY}
 }
 
 /** Palette colours by slot, in SLOT order. Nothing is dark: the display is additive. */
@@ -217,6 +251,7 @@ function paletteColors(s: ModelStyle): vec4[] {
   c[SLOT.CELL] = new vec4(s.secondary.x * 0.82, s.secondary.y * 0.82, s.secondary.z * 0.9, 1)
   c[SLOT.CLEAR] = new vec4(0.5, 0.64, 0.8, 1)
   c[SLOT.GRID] = new vec4(0.2, 0.23, 0.3, 1)
+  c[SLOT.BELLY] = s.primary; c[SLOT.ACCENT] = s.secondary; c[SLOT.NACELLE] = s.primary; c[SLOT.WINGLET] = s.secondary; c[SLOT.REAR] = s.primary; c[SLOT.WING] = s.primary
   return c
 }
 
@@ -226,8 +261,8 @@ const materialCache: {[key: string]: Material} = {}
  * The shared model material for a style: the kit's lit PBR material with a small palette texture (one cell per
  * colour slot, each cell a belly-dark .. top-light gradient). One material serves every model of that style.
  */
-export function modelMaterial(kit: PartKit, style: ModelStyle): Material {
-  const cols = paletteColors(style)
+export function modelMaterial(kit: PartKit, style: ModelStyle, palette?: vec4[] | null): Material {
+  const cols = palette ?? paletteColors(style)
   const key = cols.map((c) => c.x.toFixed(2) + c.y.toFixed(2) + c.z.toFixed(2)).join("|")
   const hit = materialCache[key]
   if (hit && !isNull(hit)) return hit
@@ -307,10 +342,11 @@ export function fleetExamples(have: {[family: string]: boolean}): SkyObjectInfo[
 // Building
 // ---------------------------------------------------------------------------------------------------------------
 
-const geoCache: {[fam: string]: ModelGeo} = {}
-function geoFor(fam: ModelFamily): ModelGeo {
-  if (!geoCache[fam]) geoCache[fam] = buildGeo(fam)
-  return geoCache[fam]
+const geoCache: {[key: string]: ModelGeo} = {}
+function geoFor(fam: ModelFamily, lg: LiveryGeo): ModelGeo {
+  const key = fam + "|" + liveryGeoKey(lg)
+  if (!geoCache[key]) geoCache[key] = buildGeo(fam, lg)
+  return geoCache[key]
 }
 
 const AXES: {[a in SpinAxis]: vec3} = {y: new vec3(0, 1, 0), x: new vec3(1, 0, 0), z: new vec3(0, 0, 1)}
@@ -326,8 +362,10 @@ function addMesh(parent: SceneObject, name: string, mesh: RenderMesh, mat: Mater
 
 export function buildModel(kit: PartKit, parent: SceneObject, name: string, kind: SkyKind, span: number, style: ModelStyle, typeCode?: string, id?: string, local?: boolean): BuiltModel {
   const family = modelFamilyFor(kind, typeCode, id, local)
-  const geo = geoFor(family)
-  const mat = modelMaterial(kit, style)
+  const look = lookFor(family, style, id, kind)
+  const geo = geoFor(family, look.geo)
+  const gkey = family + "|" + liveryGeoKey(look.geo)
+  const mat = modelMaterial(kit, style, look.pal)
   const root = makeObj(parent, name)
   const model: BuiltModel = {root, mainRotor: null, tailRotor: null, family, spinners: [], bodyPivot: null, blurs: [], tris: 0, drawCalls: 0, material: mat}
 
@@ -336,14 +374,14 @@ export function buildModel(kit: PartKit, parent: SceneObject, name: string, kind
     model.bodyPivot = makeObj(root, "SpinPivot")
     bodyParent = model.bodyPivot
   }
-  addMesh(bodyParent, "Body", geoMesh(family + ":body", geo.body), mat, span)
+  addMesh(bodyParent, "Body", geoMesh(gkey + ":body", geo.body), mat, span)
   model.tris += geo.body.tris
   model.drawCalls++
 
   for (const sp of geo.spins as SpinPart[]) {
     const pivot = makeObj(root, sp.role === "main" ? "MainRotor" : sp.role === "tail" ? "TailRotor" : sp.name)
     pivot.getTransform().setLocalPosition(new vec3(sp.pivot[0] * span, sp.pivot[1] * span, sp.pivot[2] * span))
-    addMesh(pivot, sp.name + "_Mesh", geoMesh(family + ":" + sp.name, sp.geo), mat, span)
+    addMesh(pivot, sp.name + "_Mesh", geoMesh(gkey + ":" + sp.name, sp.geo), mat, span)
     model.spinners.push({obj: pivot, axis: AXES[sp.axis], rate: sp.rate})
     if (sp.role === "main") model.mainRotor = pivot
     else if (sp.role === "tail") model.tailRotor = pivot
