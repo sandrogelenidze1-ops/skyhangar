@@ -20,6 +20,7 @@ const TRAIL_HEAD_W = 0.2 // ribbon width at the icon / at the tail, cm
 const TRAIL_TAIL_W = 0.08
 const TRAIL_HEAD_ALPHA = 0.8
 const TRAIL_Y = 0.45
+const TRAIL_COLOR = new vec4(0, 1, 1, 1) // cyan, distinct from the white plane icons
 const TRAIL_STRIDE = 12 // position 3 + normal 3 + uv 2 + colour 4
 
 interface Blip {
@@ -272,7 +273,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       const hw = len > 0 ? TRAIL_HEAD_W / 2 : 0
       const tw = len > 0 ? TRAIL_TAIL_W / 2 : 0
       const k = i * 4 * TRAIL_STRIDE
-      const c = bl.base
+      const c = TRAIL_COLOR
       const ha = TRAIL_HEAD_ALPHA
       for (let v = 0; v < 4; v++) {
         const o = k + v * TRAIL_STRIDE
