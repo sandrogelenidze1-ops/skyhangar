@@ -104,6 +104,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private dimMats: {m: Material; a: number}[] = []
   private trailBuilder: MeshBuilder | null = null
   private trailData: number[] = []
+  private trailFailed = false
   private _onBlipTap = new Event<SkyObjectInfo>()
   get onBlipTap(): PublicApi<SkyObjectInfo> { return this._onBlipTap.publicApi() }
 
@@ -208,7 +209,12 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       it.onTriggerEnd.add(() => this._onBlipTap.invoke(info))
       this.blips.push(b)
     }
-    this.buildTrails(kit)
+    try {
+      this.buildTrails(kit)
+    } catch (e) {
+      print("Radar trail setup failed: " + e)
+      this.trailFailed = true
+    }
     this.discBasePos = this.discRoot.getTransform().getLocalPosition()
     this.collectDimMats(this.discRoot)
     this.built = true
@@ -282,8 +288,16 @@ export class SkyHangarRadarController extends BaseScriptComponent {
         d[o + 11] = head ? ha : 0
       }
     }
-    b.setVertexInterleaved(0, d)
-    b.updateMesh()
+    // setVertexInterleaved writes ONE vertex (12 floats), so upload per vertex
+    try {
+      const n = this.blips.length * 4
+      for (let v = 0; v < n; v++) b.setVertexInterleaved(v, d.slice(v * TRAIL_STRIDE, (v + 1) * TRAIL_STRIDE))
+      b.updateMesh()
+    } catch (e) {
+      if (!this.trailFailed) print("Radar trails disabled: " + e)
+      this.trailFailed = true
+      this.trailBuilder = null
+    }
   }
 
   /** Every non-blip material of the disc with its own alpha, so the whole radar can be dimmed together. */
