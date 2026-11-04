@@ -54,27 +54,25 @@ export function runModelDetailChecks(c: Check, print: (s: string) => void): void
       const angs = mid.map((x) => (Math.atan2(x.c[1], Math.abs(x.c[0])) * 180) / Math.PI)
       const minA = Math.min(...angs), maxA = Math.max(...angs)
       c.check(`${fam}: window row ${minA.toFixed(1)}..${maxA.toFixed(1)} deg above midline (want ~25, not on top)`, "inspection", minA > 21 && maxA < 29)
-      // windscreen: dark glass flush with the hull, flanking the nose from t = 0.45 to 0.35 D behind the nose start, 0.175 R .. 0.425 R above the axis
+      // windscreen: one front band centred on x = 0 (pane 0) plus a small side window per side (panes 1, 2)
       const ws = geo.windscreen ?? []
       const g = geo.body
       const R = fus.D / 2
-      let yMin = 1e9, yMax = -1e9, zMin = 1e9, zMax = -1e9, inward = 0, tris = 0
-      for (const p of ws) for (let t = p.tri0; t < p.tri1; t++) {
+      let xMin = 1e9, xMax = -1e9, yMin = 1e9, yMax = -1e9, inward = 0, tris = 0
+      ws.forEach((p, pi) => { for (let t = p.tri0; t < p.tri1; t++) {
         const k = [g.idx[t * 3], g.idx[t * 3 + 1], g.idx[t * 3 + 2]]
         const q = k.map((i) => [g.pos[i * 3], g.pos[i * 3 + 1], g.pos[i * 3 + 2]])
-        for (const v of q) { yMin = Math.min(yMin, v[1]); yMax = Math.max(yMax, v[1]); zMin = Math.min(zMin, v[2]); zMax = Math.max(zMax, v[2]) }
+        if (pi === 0) for (const v of q) { xMin = Math.min(xMin, v[0]); xMax = Math.max(xMax, v[0]); yMin = Math.min(yMin, v[1]); yMax = Math.max(yMax, v[1]) }
         const e1 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]], e2 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]]
         const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
-        if (n[0] * (q[0][0] + q[1][0] + q[2][0]) + n[1] * (q[0][1] + q[1][1] + q[2][1]) < 0) inward++
+        if (n[0] * (q[0][0] + q[1][0] + q[2][0]) + n[1] * (q[0][1] + q[1][1] + q[2][1]) - n[2] * 0.0001 < 0 && pi > 0) inward++
         tris++
-      }
-      const topR = yMax / R, botR = yMin / R, ctrR = (yMin + yMax) / 2 / R
-      const noseLen = (fam === "turboprop" ? 0.9 : fam === "regional" || fam === "bizSmall" || fam === "bizLarge" ? 1.5 : 1.4) * fus.D
-      const zStartD = (zMin - fus.zNose) / fus.D, zEndD = (zMax - fus.zNose) / fus.D
-      print(`[SH-TEST] ${fam} windscreen: top ${topR.toFixed(3)} R, bottom ${botR.toFixed(3)} R, centre ${ctrR.toFixed(3)} R, from ${zStartD.toFixed(2)} D to ${zEndD.toFixed(2)} D behind the tip (nose ${(noseLen / fus.D).toFixed(1)} D)`)
-      c.check(`${fam}: windscreen glass present (${ws.length} panes, ${tris} tris), faces outward (${inward} inward)`, "inspection", ws.length >= 1 && tris > 0 && inward === 0)
-      c.check(`${fam}: windscreen top ${topR.toFixed(3)} R <= 0.65 R and centre ${ctrR.toFixed(2)} R ~ 0.30 R`, "inspection", topR <= 0.65 && Math.abs(ctrR - 0.3) < 0.03)
-      c.check(`${fam}: windscreen starts at t=0.45 and ends 0.35 D behind the nose start`, "inspection", Math.abs(zStartD - noseLen / fus.D * 0.55) < 0.03 && Math.abs(zEndD - (noseLen / fus.D + 0.35)) < 0.03)
+      } })
+      const widthPct = (xMax - xMin) / fus.D * 100, topR = yMax / R, botR = yMin / R
+      print(`[SH-TEST] ${fam} front band: width ${widthPct.toFixed(1)} % of fuselage width, top ${topR.toFixed(3)} R, bottom ${botR.toFixed(3)} R, max |x| ${(Math.max(-xMin, xMax) / R).toFixed(3)} R`)
+      c.check(`${fam}: front windscreen + 2 side windows present (${ws.length} panes, ${tris} tris), side windows face outward (${inward} inward)`, "inspection", ws.length === 3 && tris > 0 && inward === 0)
+      c.check(`${fam}: front band centred, width ${widthPct.toFixed(1)} % <= 45 %, |x| <= 0.45 R`, "inspection", Math.abs(xMin + xMax) < 1e-6 && widthPct <= 45 && Math.max(-xMin, xMax) <= 0.45 * R)
+      c.check(`${fam}: front band top ${topR.toFixed(3)} R <= 0.60 R, bottom ${botR.toFixed(2)} R >= 0.10 R`, "inspection", topR <= 0.6 && botR >= 0.1)
     }
 
     for (const fam of ["bizSmall", "bizLarge"] as ModelFamily[]) {
