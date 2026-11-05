@@ -24,22 +24,18 @@ export interface FacadeStyle {
   accent: RGB // awning stripes
 }
 
-// Realistic, muted city: ~70% neutral warm concrete / stucco / brick / stone / off-white (0-4), ~25% muted tones (5-8), ~5% one stronger accent (9)
+// The night palette is the reference look, so the walls use ONLY its colours: muted brick red-brown, light grey-blue (off-white), concrete / stone and soft
+// blue-grey (slate). Time of Day never changes these hues: day is the same colours, only a little brighter, a little desaturated and a little hazier with distance.
 export const STYLES: FacadeStyle[] = [
   {name: "concrete", wall: [0.8, 0.76, 0.7], frame: [0.95, 0.94, 0.9], accent: [0.62, 0.45, 0.38]},
-  {name: "stucco", wall: [0.9, 0.83, 0.7], frame: [0.96, 0.95, 0.92], accent: [0.5, 0.62, 0.6]},
-  {name: "brick", wall: [0.72, 0.46, 0.38], frame: [0.93, 0.9, 0.84], accent: [0.85, 0.78, 0.6]},
-  {name: "stone", wall: [0.78, 0.75, 0.7], frame: [0.4, 0.46, 0.52], accent: [0.55, 0.5, 0.45]},
-  {name: "offwhite", wall: [0.93, 0.91, 0.85], frame: [0.42, 0.5, 0.56], accent: [0.6, 0.45, 0.4]},
-  {name: "dustyteal", wall: [0.5, 0.7, 0.68], frame: [0.95, 0.96, 0.94], accent: [0.86, 0.74, 0.52]},
-  {name: "ochre", wall: [0.86, 0.74, 0.52], frame: [0.96, 0.94, 0.88], accent: [0.52, 0.6, 0.7]},
-  {name: "slate", wall: [0.52, 0.6, 0.7], frame: [0.94, 0.95, 0.96], accent: [0.8, 0.72, 0.55]},
-  {name: "sage", wall: [0.64, 0.72, 0.58], frame: [0.95, 0.95, 0.9], accent: [0.78, 0.66, 0.5]},
-  {name: "terracotta", wall: [0.88, 0.5, 0.32], frame: [0.97, 0.94, 0.88], accent: [0.42, 0.55, 0.6]}
+  {name: "brick", wall: [0.72, 0.46, 0.38], frame: [0.93, 0.9, 0.84], accent: [0.52, 0.6, 0.7]},
+  {name: "stone", wall: [0.78, 0.75, 0.7], frame: [0.4, 0.46, 0.52], accent: [0.62, 0.45, 0.38]},
+  {name: "offwhite", wall: [0.93, 0.91, 0.85], frame: [0.42, 0.5, 0.56], accent: [0.52, 0.6, 0.7]},
+  {name: "slate", wall: [0.52, 0.6, 0.7], frame: [0.94, 0.95, 0.96], accent: [0.62, 0.45, 0.38]}
 ]
-export const NEUTRAL_STYLES = [0, 1, 2, 3, 4]
-export const MUTED_STYLES = [5, 6, 7, 8]
-export const ACCENT_STYLE = 9
+export const NEUTRAL_STYLES = [0, 1, 2, 3]
+export const MUTED_STYLES = [4]
+export const ACCENT_STYLE = 1
 export const ATLAS_H = STYLES.length * ROWS_PER_STYLE * BAY_H
 
 export interface BayVariant {
@@ -67,9 +63,33 @@ export const S_WALL = 36, S_WALLSH = 37, S_CAP = 38, S_METAL = 39, S_TANK = 40, 
 export interface FacadeTime {
   frac: number // fraction of windows lit (0 day, 0.55 dusk, 0.35 night)
   floor: number // luminance floor
-  tint: RGB // time-of-day multiplier for walls
+  tint: RGB // multiplier for walls: always the night grade (the day never changes the hues)
   glass: RGB // glass tone
   t: number // seconds, for flicker
+  day: number // 0 at night .. 1 by day: how much of the gentle day grade (brighter, slightly desaturated) is applied
+  haze: number // 0..1: how far colours are pulled toward the cool grey-blue haze (more for far buildings, only by day)
+}
+
+// ---- Time of Day for the facades (pure, so it can be checked under Node) ----
+export const NIGHT_TINT: RGB = [0.62, 0.66, 0.96] // the night wall tint: the reference hues
+const GLASS_TONE: RGB[] = [[0.64, 0.76, 0.88], [0.74, 0.66, 0.84], [0.34, 0.45, 0.82]] // bright blue-grey glass reflecting the sky, never black
+const LIT_FRAC = [0, 0.55, 0.35] // fraction of windows lit: none by day, 55% at dusk, 35% at night
+const FACADE_FLOOR = [0.44, 0.41, 0.38] // luminance floors for the walls: day, dusk, night (the additive display needs bright colours, but day stays close to night)
+export const HAZE_COLOR: RGB = [0.72, 0.77, 0.85] // cool light grey-blue
+export const DAY_DESAT = 0.18 // by day colours lose this much saturation...
+export const DAY_BRIGHT = 0.1 // ...and gain this much brightness
+
+function mixw(c: number[][], w: number[]): RGB { return [0, 1, 2].map((k) => c[0][k] * w[0] + c[1][k] * w[1] + c[2][k] * w[2]) as RGB }
+/** Facade time inputs for the Time of Day weights w = [day, dusk, night]; haze is the far-building haze amount at full day (0 = none). */
+export function facadeTimeFor(w: number[], haze: number, t: number): FacadeTime {
+  const day = w[0] + 0.5 * w[1]
+  return {
+    frac: LIT_FRAC[0] * w[0] + LIT_FRAC[1] * w[1] + LIT_FRAC[2] * w[2],
+    floor: FACADE_FLOOR[0] * w[0] + FACADE_FLOOR[1] * w[1] + FACADE_FLOOR[2] * w[2],
+    tint: NIGHT_TINT,
+    glass: mixw(GLASS_TONE, w),
+    t, day, haze: haze * day
+  }
 }
 
 export class FacadeAtlas {
@@ -93,7 +113,13 @@ interface Pal {
 
 /** One palette for a style at the given time of day and shade (1 = lit side, 0.78 = shaded side): every colour is lifted to the luminance floor. */
 function makePalette(st: FacadeStyle, ft: FacadeTime, shade: number): Pal {
-  const lift = (c: number[]): RGB => minLuminance(c.map((x) => Math.min(1, x)), ft.floor)
+  // the day grade: the same colours, a touch desaturated and brighter, then a little pulled toward the cool haze (never more saturated than at night)
+  const grade = (c: number[]): RGB => {
+    const l = c[0] * 0.3 + c[1] * 0.4 + c[2] * 0.3
+    const k = 1 + DAY_BRIGHT * ft.day, d = 1 - DAY_DESAT * ft.day
+    return mixc([0, 1, 2].map((q) => (l + (c[q] - l) * d) * k), HAZE_COLOR, ft.haze)
+  }
+  const lift = (c: number[]): RGB => minLuminance(grade(c.map((x) => Math.min(1, x))), ft.floor)
   const wall0 = [0, 1, 2].map((k) => st.wall[k] * ft.tint[k])
   const wall = lift(mul(wall0, shade))
   return {
@@ -196,6 +222,12 @@ function writeCell(d: Uint8Array, col: number, row: number): void {
       d[o + 3] = 255
     }
   }
+}
+
+/** Final colour (0..255, with the editor tone) of a lit wall of a style: what the atlas shows. For checks. */
+export function facadeWallColor(style: number, ft: FacadeTime): number[] {
+  const t = editorTone(makePalette(STYLES[style], ft, 1).wall)
+  return t.map((v) => Math.round(255 * v))
 }
 
 /** Repaint a whole atlas (every style, every variant): palette lifted to the floor, editor tone baked in. */

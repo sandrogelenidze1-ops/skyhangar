@@ -22,6 +22,7 @@ import {SH_N_MenuInView} from "./Scenarios/SH_N_MenuInView"
 import {SH_M1_Models} from "./Scenarios/SH_M1_Models"
 import {SH_M3_ModelDetail} from "./Scenarios/SH_M3_ModelDetail"
 import {SH_N_Skyline} from "./Scenarios/SH_N_Skyline"
+import {SH_N_FacadeDay} from "./Scenarios/SH_N_FacadeDay"
 import {SH_M7_Variety} from "./Scenarios/SH_M7_Variety"
 import {SH_P1_Perf} from "./Scenarios/SH_P1_Perf"
 import {SH_T8_InputRules} from "./Scenarios/SH_T8_InputRules"
@@ -51,6 +52,7 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "m1_models", typename: SH_M1_Models.getTypeName()},
     {id: "m3_model_detail", typename: SH_M3_ModelDetail.getTypeName()},
     {id: "n_skyline", typename: SH_N_Skyline.getTypeName()},
+    {id: "n_facade_day", typename: SH_N_FacadeDay.getTypeName()},
     {id: "m7_variety", typename: SH_M7_Variety.getTypeName()},
     {id: "p1_perf", typename: SH_P1_Perf.getTypeName()},
     {id: "t8_input_rules", typename: SH_T8_InputRules.getTypeName()},

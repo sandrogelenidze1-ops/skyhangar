@@ -15,7 +15,7 @@ import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHangarUtil"
 import {MeshBatch} from "./SkyHangarBatch"
 import {SkyHangarSkyline} from "./SkyHangarSkyline"
-import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
+import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, facadeTimeFor, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
 const DEG = Math.PI / 180
 
@@ -33,11 +33,9 @@ const GROUND_DROP = 1500 // street level (where the far blocks stand) this far b
 
 type RGB = [number, number, number]
 
-// Time-of-day tint on walls: warm at dusk, a blue-hour tint at night (the luminance floor then keeps them bright enough)
-const BLOCK_TINT: RGB[] = [[1.0, 1.0, 1.0], [1.0, 0.86, 0.76], [0.62, 0.66, 0.96]]
-const GLASS: RGB[] = [[0.64, 0.76, 0.88], [0.74, 0.66, 0.84], [0.34, 0.45, 0.82]] // bright blue-grey glass reflecting the sky, never black
-const LIT_FRAC = [0, 0.55, 0.35] // fraction of windows lit: none by day, 55% at dusk, 35% at night
+// Wall colours and glass come from SkyHangarFacade (facadeTimeFor): the night palette is the reference, the day is a gentle grade of the same colours.
 const HORIZON: RGB[] = [[0.44, 0.69, 0.95], [1.0, 0.55, 0.24], [0.45, 0.08, 0.74]] // the sky script's horizon colours
+const ATLAS_HAZE = [0.06, 0.22] // day haze of the near / far facade atlas (0 = none)
 const AMB_LEVEL = [1.0, 0.85, 0.6]
 const AMB_TINT: RGB[] = [[1.0, 0.96, 0.88], [1.0, 0.72, 0.62], [0.42, 0.52, 1.0]]
 const TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material
@@ -85,6 +83,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private skyline: SkyHangarSkyline | null = null // the distant skyline beyond the far ring (two merged meshes)
   private atlases: FacadeAtlas[] = []
   private ft: FacadeTime | null = null
+  private fts: FacadeTime[] = [] // facade time per atlas (near buildings, far ring)
   private flickerCursor = 0
   private planeMesh: RenderMesh | null = null
   private todSource: any = null
@@ -149,7 +148,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     // one facade atlas and one merged batch (the editor tone is uniform, so there are no elevation bands)
     const atlasMats: Material[] = []
     const batches: MeshBatch[] = []
-    for (let n = 0; n < 1; n++) {
+    for (let n = 0; n < 2; n++) { // atlas 0: the near buildings (rings A, B); atlas 1: the far ring C, a little hazier by day
       const a = new FacadeAtlas()
       this.atlases.push(a)
       const m = opaqueTexMat(a.tex)
@@ -222,12 +221,13 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   /** One building: a shaded body, a facade grid with a window in every bay, and a rooftop; all appended to batches. */
   private addBuilding(batches: MeshBatch[], R: any, ri: number, a: number, d: number, w: number, top: number, style: number, rnd: () => number): void {
     const base = R.base
+    const bt = batches[ri === 2 ? 1 : 0] // the far ring has its own (hazier) atlas
     const yaw = -a
     const cx = Math.sin(a) * d, cz = -Math.cos(a) * d
     const right = [Math.cos(a), 0, Math.sin(a)]
     const front = [-Math.sin(a), 0, Math.cos(a)]
     const uvSh = variantUV(style, S_WALLSH), uvCap = variantUV(style, S_CAP), uvWall = variantUV(style, S_WALL)
-    if (top - base > 0.5) batches[0].box(cx, (base + top) / 2, cz, w, top - base, 260, yaw, uvSh, uvCap)
+    if (top - base > 0.5) bt.box(cx, (base + top) / 2, cz, w, top - base, 260, yaw, uvSh, uvCap)
     // facade bays
     const bayW = d * Math.tan(R.bayDeg * DEG), bayH = bayW * 1.15
     const yBot = Math.max(base, Math.tan(-16 * DEG) * d) // nothing below the roof ledge's view is worth building
@@ -251,7 +251,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
             vi = q < 0.07 ? V_AC + Math.floor(rnd() * 4) : q < 0.17 ? V_BALC + Math.floor(rnd() * 4) : V_WIN + Math.floor(rnd() * 12)
           }
           const x0 = (c - cols / 2) * bayW, x1 = x0 + bayW
-          batches[0].quad(
+          bt.quad(
             [fc[0] + right[0] * x0, yB, fc[2] + right[2] * x0], [fc[0] + right[0] * x1, yB, fc[2] + right[2] * x1],
             [fc[0] + right[0] * x1, yT, fc[2] + right[2] * x1], [fc[0] + right[0] * x0, yT, fc[2] + right[2] * x0],
             front[0], 0, front[2], variantUV(style, vi))
@@ -259,7 +259,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       }
     }
     // rooftop: every building gets a parapet cap and its own mix of setback, tank, antenna and AC boxes (the far ring a lighter set)
-    const rb = batches[0]
+    const rb = bt
     const on = (y: number, xo: number): number[] => [cx + right[0] * xo, y, cz + right[2] * xo]
     const capH = bayH * 0.16
     const uvMetal = variantUV(style, S_METAL), uvTank = variantUV(style, S_TANK), uvAc = variantUV(style, S_AC)
@@ -342,17 +342,6 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
         poleTop = [p[0], y + ph, p[2]]
       }
       this.beaconPts.push([poleTop[0], poleTop[1] + 6, poleTop[2]])
-    }
-  }
-
-  /** Time-of-day inputs for the facade painter. */
-  private facadeTime(w: number[], t: number): FacadeTime {
-    return {
-      frac: LIT_FRAC[0] * w[0] + LIT_FRAC[1] * w[1] + LIT_FRAC[2] * w[2],
-      floor: luminanceFloor(w),
-      tint: mix3(BLOCK_TINT, w),
-      glass: mix3(GLASS, w),
-      t
     }
   }
 
@@ -541,8 +530,9 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     const level = AMB_LEVEL[0] * w[0] + AMB_LEVEL[1] * w[1] + AMB_LEVEL[2] * w[2]
     const ambT = mix3(AMB_TINT, w)
     const amb = [0, 1, 2].map((k) => level * (ambT[k] * 0.7 + horizon[k] * 0.3))
-    this.ft = this.facadeTime(w, getTime())
-    for (const a of this.atlases) paintAtlas(a, this.ft)
+    this.fts = ATLAS_HAZE.map((h) => facadeTimeFor(w, h, getTime())) // day: a touch brighter and more desaturated, hazier with distance; hues never change
+    this.ft = this.fts[0]
+    this.atlases.forEach((a, i) => paintAtlas(a, this.fts[i]))
     // roof: albedo * ambient plus a warm sunset rim on the lit edges at dusk, lifted so even the shaded faces stay above the big-surface floor
     // (lit faces show roughly 0.75 of their albedo)
     const rim = w[1] * 0.3
@@ -582,11 +572,11 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     const lk = (0.55 + 0.45 * lampL) * (1 + 0.04 * Math.sin(t * 3.1) + 0.03 * Math.sin(t * 7.3))
     this.lampBulbMat.mainPass.baseColor = new vec4(Math.min(1, lk), Math.min(1, (0.82 - 0.1 * lampL) * lk), Math.min(1, 0.5 * lk), 1)
     if (this.ft && this.ft.frac > 0.02) {
-      this.ft.t = t
+      for (const f of this.fts) f.t = t
       for (let n = 0; n < 2; n++) {
         const style = this.flickerCursor
         this.flickerCursor = (this.flickerCursor + 1) % STYLES.length
-        for (const a of this.atlases) paintFlicker(a, this.ft, style)
+        this.atlases.forEach((a, i) => paintFlicker(a, this.fts[i], style))
       }
     }
   }

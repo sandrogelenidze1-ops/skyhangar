@@ -1,5 +1,5 @@
 // Pure skyline checks (no Lens globals) so the same assertions run in the LEAF scenario SH_N_Skyline and in plain Node.
-import {COL_FRONT, COL_BACK, tone, skylineTowers, paintSkyline, stripGeometry, towerTotal, towerGrid, towerPrims, skylineLook, rowElevation, elevationRow, SKY_MAX_EL, SKY_FRONT_MAX_EL, TEX_W, TEX_H, STRIP_R, COL_PITCH, POLE_BASE_PX, POLE_BASE_CM, PX_PER_DEG} from "../../Scripts/SkyHangarSkylineSpec"
+import {COL_FRONT, COL_BACK, tone, skylineTowers, paintSkyline, stripGeometry, towerTotal, towerGrid, towerPrims, skylineLook, rowElevation, elevationRow, DAY_SKY_SHOWN, SKY_MAX_EL, SKY_FRONT_MAX_EL, TEX_W, TEX_H, STRIP_R, COL_PITCH, POLE_BASE_PX, POLE_BASE_CM, PX_PER_DEG} from "../../Scripts/SkyHangarSkylineSpec"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
@@ -145,19 +145,40 @@ export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   const skyL = lum(100 / 255, 100 / 255, 1), shownL = lum(shown[0] / 255, shown[1] / 255, shown[2] / 255)
   c.check("at night the silhouette is clearly darker than the horizon sky and not black", "inspection", shownL <= skyL * 0.88 && shownL >= 0.3 && shown[2] < 235, `shown ~${shown.map(Math.round).join(", ")} vs sky 100, 100, 255; toned ${tone(COL_FRONT).map((v) => v.toFixed(2)).join(", ")}`)
 
-  // night only: lights and beacons by time of day, silhouette lightened and hazed by day
+  // night only: lights and beacons by time of day; by day a soft hazy blue-grey silhouette cross-fades in
   const day = skylineLook([1, 0, 0], 0), dusk = skylineLook([0, 1, 0], 0.3), night = skylineLook([0, 0, 1], 1)
   c.check("day: all window lights and beacons off", "inspection", day.lightAlpha === 0)
   c.check("night: lights and beacons fully on", "inspection", night.lightAlpha === 1)
-  c.check("day: silhouette lightened and hazed (alpha <= 0.45), night fully dark, dusk in between", "inspection", day.silAlpha <= 0.45 && night.silAlpha === 1 && dusk.silAlpha > day.silAlpha && dusk.silAlpha < night.silAlpha, `${day.silAlpha.toFixed(2)} / ${dusk.silAlpha.toFixed(2)} / ${night.silAlpha.toFixed(2)}`)
-  let smooth = true, prevL = -1, prevA = -1
-  for (let i = 0; i <= 20; i++) { // sweep day -> dusk -> night: both values only ever grow, in small steps
+  c.check("day shows the soft day silhouette only; night shows the night silhouette only; dusk blends", "inspection", day.dayAlpha >= 0.9 && day.nightAlpha === 0 && night.nightAlpha === 1 && night.dayAlpha === 0 && dusk.nightAlpha > 0 && dusk.dayAlpha === 0, `day ${day.dayAlpha.toFixed(2)}/${day.nightAlpha.toFixed(2)}, dusk ${dusk.dayAlpha.toFixed(2)}/${dusk.nightAlpha.toFixed(2)}, night ${night.dayAlpha.toFixed(2)}/${night.nightAlpha.toFixed(2)}`)
+  let smooth = true, prevL = -1, prevN = -1, prevD = 2
+  for (let i = 0; i <= 20; i++) { // sweep day -> dusk -> night: lights and the night silhouette only grow, the day silhouette only fades, in small steps
     const t = i / 20
     const w = t <= 0.5 ? [1 - t * 2, t * 2, 0] : [0, 1 - (t - 0.5) * 2, (t - 0.5) * 2]
     const lk = skylineLook(w, Math.max(0, Math.min(1, (t - 0.3) / 0.55)))
-    if (prevL >= 0 && (lk.lightAlpha < prevL - 1e-9 || lk.silAlpha < prevA - 1e-9 || lk.lightAlpha - prevL > 0.2 || lk.silAlpha - prevA > 0.2)) smooth = false
-    prevL = lk.lightAlpha; prevA = lk.silAlpha
+    if (prevL >= 0 && (lk.lightAlpha < prevL - 1e-9 || lk.nightAlpha < prevN - 1e-9 || lk.dayAlpha > prevD + 1e-9 || lk.lightAlpha - prevL > 0.2 || lk.nightAlpha - prevN > 0.2 || prevD - lk.dayAlpha > 0.2)) smooth = false
+    prevL = lk.lightAlpha; prevN = lk.nightAlpha; prevD = lk.dayAlpha
   }
-  c.check("lights and haze interpolate smoothly with the time of day", "inspection", smooth)
+  c.check("lights and the day / night silhouettes interpolate smoothly with the time of day", "inspection", smooth)
+
+  // the day silhouette: desaturated soft blue-grey, a few steps darker than the horizon sky, fading toward the bottom, shapes still readable, no lights
+  const sat = (v: number[]): number => (Math.max(...v) - Math.min(...v)) / Math.max(...v)
+  const dayTexel = (x: number, r: number): number[] => [0, 1, 2, 3].map((k) => painted.day[(r * TEX_W + x) * 4 + k])
+  const dayTop: number[][] = [], dayAlphaBottom: number[] = [], dayAlphaTop: number[] = []
+  for (const t of towers.filter((q) => !q.back)) {
+    const x = Math.round(((t.az % 360) + 360) % 360 * PX_PER_DEG)
+    const rt = Math.round(elevationRow(2.8)), rb = Math.round(elevationRow(-0.8))
+    if (x > 0 && painted.sil[(rt * TEX_W + x) * 4 + 3] === 255) { dayTop.push(dayTexel(x, rt)); dayAlphaTop.push(dayTexel(x, rt)[3]); dayAlphaBottom.push(dayTexel(x, rb)[3]) }
+  }
+  const avg = dayTop.length ? [0, 1, 2].map((k) => dayTop.reduce((a, v) => a + v[k], 0) / dayTop.length) : [0, 0, 0]
+  const shownDay = avg.map((v) => 80 + (175 * v) / 255)
+  const lumOf = (v: number[]): number => 0.3 * v[0] + 0.4 * v[1] + 0.3 * v[2]
+  const ratio = lumOf(shownDay) / lumOf(DAY_SKY_SHOWN)
+  c.check("day: the towers are a few steps darker than the horizon sky (80-92% of its brightness), readable against it", "inspection", ratio >= 0.8 && ratio <= 0.92, `${(ratio * 100).toFixed(0)}% (shown ~${shownDay.map(Math.round).join(", ")} vs sky ${DAY_SKY_SHOWN.join(", ")})`)
+  c.check("day: soft blue-grey, desaturated (less saturated than the sky, B > G > R, not violet)", "inspection", sat(shownDay) < sat(DAY_SKY_SHOWN) && shownDay[2] > shownDay[1] && shownDay[1] > shownDay[0] && shownDay[0] > 100, `sat ${sat(shownDay).toFixed(2)} vs sky ${sat(DAY_SKY_SHOWN).toFixed(2)}`)
+  const meanTop = dayAlphaTop.reduce((a, v) => a + v, 0) / Math.max(1, dayAlphaTop.length), meanBot = dayAlphaBottom.reduce((a, v) => a + v, 0) / Math.max(1, dayAlphaBottom.length)
+  c.check("day: gradient fade toward the bottom (much more transparent near the horizon)", "inspection", meanBot < meanTop * 0.55 && meanTop > 200, `top alpha ${meanTop.toFixed(0)}, bottom ${meanBot.toFixed(0)}`)
+  let dayLit = 0
+  for (let i = 0; i < painted.litPx.length; i += 3) if (painted.day[(painted.litPx[i + 2] * TEX_W + painted.litPx[i + 1]) * 4] > 230) dayLit++
+  c.check("day: no window lights or beacons in the day silhouette (they are only in the lights strip, whose alpha is 0 by day)", "inspection", dayLit === 0 && day.lightAlpha === 0)
   print(`[SH-TEST] skyline: ${front.length}+${back.length} towers, ${forms.size} forms, ${painted.lit}/${painted.windows} windows lit (${(frac * 100).toFixed(0)}%), tallest ${tallest.toFixed(2)} deg`)
 }

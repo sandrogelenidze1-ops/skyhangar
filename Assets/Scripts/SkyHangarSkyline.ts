@@ -1,6 +1,7 @@
 // SkyHangarSkyline.ts
 // Owns: the PREVIEW-ONLY distant skyline, a flat dusky-violet SILHOUETTE far beyond the existing buildings (eight tower forms, four towers per side all the way around, plus a hazier low back row).
-// Two strips of one low-poly cylinder around the viewer, built once: the silhouette (alpha-masked texture, see SkyHangarSkylineSpec) and, on top of it,
+// Three strips of one low-poly cylinder around the viewer, built once: the night silhouette and the day silhouette (alpha-masked textures that cross-fade with
+// the time of day, see SkyHangarSkylineSpec) and, on top of them,
 // the tiny window dashes and red beacons (a second texture), so the lights can be switched off by day without repainting anything.
 // Both are alpha blended (like the cloud layers), depth-tested and never write depth. Its only per-frame work is follow(): one transform write, and only when the camera moved, so the ring stays
 // centred on the viewer. Time of Day only changes two material colours, from the backdrop's own slow apply(). Must not: interact, show UI or touch the existing buildings.
@@ -10,12 +11,14 @@ import {skylineTowers, paintSkyline, stripGeometry, skylineLook, Tower, TEX_W, T
 
 const TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material
 const ORDER_SKYLINE = -124 // right after the city meshes (-125); depth testing keeps the nearer buildings in front
-const ORDER_LIGHTS = -123
+const ORDER_NIGHT = -123
+const ORDER_LIGHTS = -122
 
 export class SkyHangarSkyline {
   readonly towers: Tower[] = skylineTowers()
   readonly root: SceneObject
-  private silMat: Material
+  private nightMat: Material
+  private dayMat: Material
   private lightMat: Material
   private baseY = 0 // world height of the skyline's centre (kept: only the horizontal position follows the camera)
   private lastX = 1e9
@@ -27,7 +30,8 @@ export class SkyHangarSkyline {
     this.root = makeObj(parent, "Skyline")
     this.baseY = this.root.getTransform().getWorldPosition().y
     const painted = paintSkyline(this.towers)
-    this.silMat = this.strip("Skyline_Strip", painted.sil, ORDER_SKYLINE)
+    this.dayMat = this.strip("Skyline_Day", painted.day, ORDER_SKYLINE)
+    this.nightMat = this.strip("Skyline_Strip", painted.sil, ORDER_NIGHT)
     this.lightMat = this.strip("Skyline_Lights", painted.lights, ORDER_LIGHTS)
     this.setTimeOfDay([0, 0, 1], 1)
     print("[Skyline] silhouette: " + this.towers.length + " towers, " + painted.lit + " of " + painted.windows + " windows lit, " + this.triangles + " triangles, " + this.meshObjects + " strips")
@@ -85,7 +89,8 @@ export class SkyHangarSkyline {
   /** Time of Day weights [day, dusk, night] and the backdrop's night-light amount (0 by day .. 1 at night). Called from the backdrop's slow apply(); not per frame. */
   setTimeOfDay(w: number[], light: number): void {
     const look = skylineLook(w, light)
-    this.silMat.mainPass.baseColor = new vec4(look.silTint[0], look.silTint[1], look.silTint[2], look.silAlpha)
+    this.nightMat.mainPass.baseColor = new vec4(look.nightTint[0], look.nightTint[1], look.nightTint[2], look.nightAlpha)
+    this.dayMat.mainPass.baseColor = new vec4(1, 1, 1, look.dayAlpha)
     this.lightMat.mainPass.baseColor = new vec4(1, 1, 1, look.lightAlpha)
   }
 }

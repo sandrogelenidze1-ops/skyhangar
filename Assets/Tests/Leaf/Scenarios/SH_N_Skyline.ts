@@ -1,5 +1,5 @@
 // Distant skyline silhouette: the pure checks (SkylineChecks.ts, also run in Node), plus what got built in the scene:
-// TWO alpha-blended strips (silhouette + lights) under City/Skyline, depth-tested, no depth write, no scripts (nothing per frame).
+// THREE alpha-blended strips (day silhouette, night silhouette, lights) under City/Skyline, depth-tested, no depth write, no scripts (nothing per frame).
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {findSceneObjectByName} from "Leaf.lspkg/Utils/common/Utils"
 import {Checks, getMain, waitReady, waitUntil} from "../SkyHangarTestKit"
@@ -21,7 +21,7 @@ export class SH_N_Skyline extends Scenario {
     c.check("Skyline object exists under the city", "inspection", !!sky)
     if (!sky) { c.finish(); return }
     const s = sky as SceneObject
-    c.check("exactly two strips: the silhouette and the lights", "inspection", s.getChildrenCount() === 2 && s.getChild(0).name === "Skyline_Strip" && s.getChild(1).name === "Skyline_Lights")
+    c.check("exactly three strips: the day silhouette, the night silhouette and the lights", "inspection", s.getChildrenCount() === 3 && s.getChild(0).name === "Skyline_Day" && s.getChild(1).name === "Skyline_Strip" && s.getChild(2).name === "Skyline_Lights")
     for (let i = 0; i < s.getChildrenCount(); i++) {
       const strip = s.getChild(i)
       const rmv = strip.getComponent("Component.RenderMeshVisual") as RenderMeshVisual
@@ -30,10 +30,11 @@ export class SH_N_Skyline extends Scenario {
       c.check(`${strip.name}: no scripts (nothing per frame)`, "inspection", strip.getComponents("Component.ScriptComponent").length === 0)
     }
     // night only: the lights strip alpha follows the backdrop's night-light amount (0 by day .. 1 at night)
-    const la = (s.getChild(1).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
-    const sa = (s.getChild(0).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
-    print(`[SH-TEST] skyline now: lights alpha ${la.toFixed(2)}, silhouette alpha ${sa.toFixed(2)}`)
-    c.check("lights alpha and silhouette alpha are valid for the current time of day (lights 0..1, silhouette 0.28..1)", "inspection", la >= 0 && la <= 1 && sa >= 0.27 && sa <= 1.01, `${la.toFixed(2)} / ${sa.toFixed(2)}`)
+    const la = (s.getChild(2).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
+    const sa = (s.getChild(1).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
+    const da = (s.getChild(0).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
+    print(`[SH-TEST] skyline now: lights alpha ${la.toFixed(2)}, night silhouette alpha ${sa.toFixed(2)}, day silhouette alpha ${da.toFixed(2)}`)
+    c.check("lights, night and day silhouettes cross-fade consistently for the current time of day (night alpha + day alpha is about 1 or the dusk blend, lights 0 by day)", "inspection", la >= 0 && la <= 1 && sa >= 0 && sa <= 1.01 && da >= 0 && da <= 1.01 && Math.max(sa, da) >= 0.4 && (da < 0.5 || la < 0.05), `${la.toFixed(2)} / ${sa.toFixed(2)} / ${da.toFixed(2)}`)
     // never culled, and always centred on the viewer (horizontally), so it is the same distance away from every side
     for (let i = 0; i < s.getChildrenCount(); i++) {
       const p2 = (s.getChild(i).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass

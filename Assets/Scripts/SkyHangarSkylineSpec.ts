@@ -22,6 +22,13 @@ export const POLE_BASE_CM = (POLE_BASE_PX / PX_PER_DEG) * DEG * STRIP_R
 export const COL_FRONT: number[] = [0.27, 0.25, 0.62]
 export const COL_BACK: number[] = [0.36, 0.34, 0.7]
 export const COL_HAZE: number[] = [0.42, 0.4, 0.82] // the bottom fades toward this
+/** The DAY silhouette: a soft, hazy, desaturated blue-grey a few steps darker than the daytime horizon sky, fading into the horizon haze toward the bottom.
+ * Authored as final texel colours (what the preview shows is about 80 + 175 c, see DAY_SKY_SHOWN). The sky at the horizon in the day preview is about (150, 210, 255). */
+export const DAY_SKY_SHOWN: number[] = [150, 210, 255]
+export const DAY_TOP_SHOWN: number[] = [136, 176, 212] // the towers' upper part by day (about 15% darker than the sky, less saturated)
+const dayC = (v: number[]): number[] => v.map((x) => (x - 80) / 175)
+export const COL_DAY_TOP: number[] = dayC(DAY_TOP_SHOWN)
+export const COL_DAY_SKY: number[] = dayC(DAY_SKY_SHOWN)
 const LIT: number[][] = [[0.95, 0.82, 0.55], [0.95, 0.9, 0.72]] // dim warm yellow / warm white window dashes (the towers are far away)
 const RED: number[] = [1.0, 0.16, 0.1]
 export const EDITOR_SAT = 1.3
@@ -201,7 +208,8 @@ function primCoverage(p: Prim, x: number, y: number): number {
 }
 
 export interface Painted {
-  sil: Uint8Array // silhouette RGBA (alpha is the mask)
+  sil: Uint8Array // night silhouette RGBA (alpha is the mask)
+  day: Uint8Array // day silhouette RGBA: soft blue-grey, hazier toward the bottom (same mask)
   lights: Uint8Array // window dashes and red beacons RGBA (alpha 0 elsewhere)
   windows: number // candidate window positions on the towers
   lit: number // how many of them are lit
@@ -215,7 +223,9 @@ export function paintSkyline(towers: Tower[]): Painted {
   const TF = tone(COL_FRONT), TB = tone(COL_BACK), TH = tone(COL_HAZE)
   const sil = new Uint8Array(TEX_W * TEX_H * 4)
   const lights = new Uint8Array(TEX_W * TEX_H * 4)
+  const day = new Uint8Array(TEX_W * TEX_H * 4)
   for (let i = 0; i < TEX_W * TEX_H; i++) {
+    day[i * 4] = Math.round(COL_DAY_TOP[0] * 255); day[i * 4 + 1] = Math.round(COL_DAY_TOP[1] * 255); day[i * 4 + 2] = Math.round(COL_DAY_TOP[2] * 255)
     sil[i * 4] = Math.round(TF[0] * 255); sil[i * 4 + 1] = Math.round(TF[1] * 255); sil[i * 4 + 2] = Math.round(TF[2] * 255)
     lights[i * 4] = 242; lights[i * 4 + 1] = 210; lights[i * 4 + 2] = 140
   }
@@ -224,11 +234,13 @@ export function paintSkyline(towers: Tower[]): Painted {
   const owner = new Int16Array(TEX_W * TEX_H) // tower index + 1 where a tower fully covers a texel (indexed x * TEX_H + row)
   const covF = new Float32Array(TEX_H), covB = new Float32Array(TEX_H)
   const ownF = new Int16Array(TEX_H), ownB = new Int16Array(TEX_H)
-  const rowFade: number[] = [], rowHaze: number[] = []
+  const rowFade: number[] = [], rowHaze: number[] = [], rowFadeDay: number[] = [], rowHazeDay: number[] = []
   for (let r = 0; r < TEX_H; r++) {
     const el = rowElevation(r)
     rowFade.push(smooth(-1.9, 1.2, el)) // soft gradient into the horizon haze toward the bottom
     rowHaze.push((1 - smooth(-1.4, 2.4, el)) * 0.6)
+    rowFadeDay.push(smooth(-1.9, 1.6, el) * 0.95) // by day the fade is longer and softer: the towers dissolve into the horizon haze
+    rowHazeDay.push((1 - smooth(-1.2, 3.4, el)) * 0.85)
   }
   for (let x = 0; x < TEX_W; x++) {
     covF.fill(0); covB.fill(0); ownF.fill(0); ownB.fill(0)
@@ -258,12 +270,20 @@ export function paintSkyline(towers: Tower[]): Painted {
       const o = (r * TEX_W + x) * 4
       sil[o] = Math.round(255 * clamp01(c[0])); sil[o + 1] = Math.round(255 * clamp01(c[1])); sil[o + 2] = Math.round(255 * clamp01(c[2]))
       sil[o + 3] = Math.round(255 * clamp01(a * rowFade[r]))
+      // day silhouette: the back row sits closer to the sky colour (more haze), the bottom fades into the horizon
+      const hd = rowHazeDay[r]
+      for (let q = 0; q < 3; q++) {
+        const front = lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], hd)
+        const backc = lerp(lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], 0.4), COL_DAY_SKY[q], hd)
+        day[o + q] = Math.round(255 * clamp01(k * front + (1 - k) * backc))
+      }
+      day[o + 3] = Math.round(255 * clamp01(a * rowFadeDay[r]))
       owner[x * TEX_H + r] = ownF[r] || (cf < 0.5 ? ownB[r] : 0)
     }
   }
 
   // ---- window lights: tiny dashes on regular floors, columns aligned between floors; only WHICH windows are lit is decided by a hash ----
-  const out: Painted = {sil, lights, windows: 0, lit: 0, darkFloors: 0, litPx: [], beaconPx: []}
+  const out: Painted = {sil, day, lights, windows: 0, lit: 0, darkFloors: 0, litPx: [], beaconPx: []}
   const seenDark = new Set<string>()
   for (let ti = 0; ti < towers.length; ti++) {
     const t = towers[ti]
@@ -314,13 +334,14 @@ export function paintSkyline(towers: Tower[]): Painted {
 }
 
 /**
- * How the skyline looks for the Time of Day weights w = [day, dusk, night] and the backdrop's night-light amount (0 by day, 1 at night):
- * the silhouette is lightened and hazed (more transparent) by day so it melts into the sky; the lights and beacons exist only at night.
+ * How the skyline looks for the Time of Day weights w = [day, dusk, night] and the backdrop's night-light amount (0 by day .. 1 at night):
+ * the night silhouette (dusky violet) and the day silhouette (soft hazy blue-grey) cross-fade with the time of day; the lights and beacons exist only at night.
  */
-export function skylineLook(w: number[], light: number): {silAlpha: number; silTint: number[]; lightAlpha: number} {
-  const silAlpha = 0.28 * w[0] + 0.85 * w[1] + 1.0 * w[2]
-  const day = [1.0, 1.0, 1.0], dusk = [1.0, 0.97, 1.0], night = [0.92, 0.94, 1.0]
-  return {silAlpha, silTint: [0, 1, 2].map((k) => day[k] * w[0] + dusk[k] * w[1] + night[k] * w[2]), lightAlpha: clamp01(light)}
+export function skylineLook(w: number[], light: number): {nightAlpha: number; dayAlpha: number; nightTint: number[]; lightAlpha: number} {
+  const nightAlpha = 0.85 * w[1] + 1.0 * w[2]
+  const dayAlpha = 0.95 * w[0]
+  const dusk = [1.0, 0.97, 1.0], night = [0.92, 0.94, 1.0]
+  return {nightAlpha, dayAlpha, nightTint: [0, 1, 2].map((k) => dusk[k] * w[1] + night[k] * w[2] + 1.0 * w[0]), lightAlpha: clamp01(light)}
 }
 
 /** The cylinder strip: positions [x, y, z] and uv [u, v] per vertex, plus triangle indices. One ring of (SEGMENTS + 1) x 2 vertices. */
