@@ -1,30 +1,38 @@
 // SkyHangarSkyline.ts
-// Owns: the PREVIEW-ONLY distant skyline, a flat dusky-violet SILHOUETTE far beyond the existing buildings. One texture (alpha-masked skyline with a haze
-// gradient, sparse light specks and a few red spire beacons, see SkyHangarSkylineSpec) on one low-poly cylinder strip around the viewer: one mesh, one
-// material, built once. No per-frame work; Time of Day only changes the material tint, from the backdrop's own slow apply().
-// The strip is alpha blended (like the cloud layers), depth-tested and never writes depth. It stops at 8 degrees elevation, so the sky above stays clear.
-// Must not: interact, show UI or touch the existing buildings.
+// Owns: the PREVIEW-ONLY distant skyline, a flat dusky-violet SILHOUETTE far beyond the existing buildings (nine distinct tower forms plus a hazier back row).
+// Two strips of one low-poly cylinder around the viewer, built once: the silhouette (alpha-masked texture, see SkyHangarSkylineSpec) and, on top of it,
+// the tiny window dashes and red beacons (a second texture), so the lights can be switched off by day without repainting anything.
+// Both are alpha blended (like the cloud layers), depth-tested and never write depth. No per-frame work: Time of Day only changes two material colours, from
+// the backdrop's own slow apply(). Must not: interact, show UI or touch the existing buildings.
 
 import {makeObj} from "./SkyHangarUtil"
-import {skylineTowers, paintSkyline, stripGeometry, Tower, TEX_W, TEX_H} from "./SkyHangarSkylineSpec"
+import {skylineTowers, paintSkyline, stripGeometry, skylineLook, Tower, TEX_W, TEX_H} from "./SkyHangarSkylineSpec"
 
 const TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material
 const ORDER_SKYLINE = -124 // right after the city meshes (-125); depth testing keeps the nearer buildings in front
-
-// Tint on the painted silhouette for [day, dusk, night]: near neutral, so the colour stays a dusky violet-blue clearly above the floor.
-export const SKYLINE_TINT: number[][] = [[1.0, 1.0, 1.0], [1.0, 0.97, 1.0], [0.92, 0.94, 1.0]]
+const ORDER_LIGHTS = -123
 
 export class SkyHangarSkyline {
   readonly towers: Tower[] = skylineTowers()
   readonly root: SceneObject
-  private mat: Material
+  private silMat: Material
+  private lightMat: Material
   triangles = 0
   meshObjects = 0
 
   constructor(parent: SceneObject) {
     this.root = makeObj(parent, "Skyline")
+    const painted = paintSkyline(this.towers)
+    this.silMat = this.strip("Skyline_Strip", painted.sil, ORDER_SKYLINE)
+    this.lightMat = this.strip("Skyline_Lights", painted.lights, ORDER_LIGHTS)
+    this.setTimeOfDay([0, 0, 1], 1)
+    print("[Skyline] silhouette: " + this.towers.length + " towers, " + painted.lit + " of " + painted.windows + " windows lit, " + this.triangles + " triangles, " + this.meshObjects + " strips")
+  }
+
+  /** One blended cylinder strip with its own texture. */
+  private strip(name: string, pixels: Uint8Array, order: number): Material {
     const tex = ProceduralTextureProvider.createWithFormat(TEX_W, TEX_H, TextureFormat.RGBA8Unorm)
-    ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, TEX_W, TEX_H, paintSkyline(this.towers))
+    ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, TEX_W, TEX_H, pixels)
     const m = TEX_MAT.clone()
     m.mainPass.baseTex = tex
     m.mainPass.baseColor = new vec4(1, 1, 1, 1)
@@ -32,8 +40,6 @@ export class SkyHangarSkyline {
     m.mainPass.depthTest = true
     m.mainPass.depthWrite = false
     m.mainPass.twoSided = true
-    this.mat = m
-
     const g = stripGeometry()
     const b = new MeshBuilder([
       {name: "position", components: 3},
@@ -47,19 +53,20 @@ export class SkyHangarSkyline {
     b.appendVerticesInterleaved(v)
     b.appendIndices(g.idx)
     b.updateMesh()
-    const o = makeObj(this.root, "Skyline_Strip")
+    const o = makeObj(this.root, name)
     const rmv = o.createComponent("Component.RenderMeshVisual") as RenderMeshVisual
     rmv.mesh = b.getMesh()
     rmv.mainMaterial = m
-    rmv.setRenderOrder(ORDER_SKYLINE)
-    this.meshObjects = 1
-    this.triangles = g.idx.length / 3
-    print("[Skyline] silhouette strip: " + this.towers.length + " towers, " + this.triangles + " triangles, 1 mesh")
+    rmv.setRenderOrder(order)
+    this.meshObjects++
+    this.triangles += g.idx.length / 3
+    return m
   }
 
-  /** Tint by Time of Day weights [day, dusk, night]. Called from the backdrop's slow apply(); not per frame. */
-  setTimeOfDay(w: number[]): void {
-    const t = [0, 1, 2].map((k) => SKYLINE_TINT[0][k] * w[0] + SKYLINE_TINT[1][k] * w[1] + SKYLINE_TINT[2][k] * w[2])
-    this.mat.mainPass.baseColor = new vec4(t[0], t[1], t[2], 1)
+  /** Time of Day weights [day, dusk, night] and the backdrop's night-light amount (0 by day .. 1 at night). Called from the backdrop's slow apply(); not per frame. */
+  setTimeOfDay(w: number[], light: number): void {
+    const look = skylineLook(w, light)
+    this.silMat.mainPass.baseColor = new vec4(look.silTint[0], look.silTint[1], look.silTint[2], look.silAlpha)
+    this.lightMat.mainPass.baseColor = new vec4(1, 1, 1, look.lightAlpha)
   }
 }

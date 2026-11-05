@@ -534,7 +534,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     const w = timeWeights(t)
     this.light = smoothstep(0.3, 0.85, t)
     this.beaconLight = smoothstep(0.25, 0.7, t)
-    if (this.skyline) this.skyline.setTimeOfDay(w)
+    if (this.skyline) this.skyline.setTimeOfDay(w, this.light)
     const horizon = mix3(HORIZON, w)
     const big = largeSurfaceFloor(w) // Day 0.65, Dusk 0.55, Night 0.45 for large flat surfaces
     // ambient colour taken from the sky: a gentle pull toward the horizon colour on top of the warm / cool tint
