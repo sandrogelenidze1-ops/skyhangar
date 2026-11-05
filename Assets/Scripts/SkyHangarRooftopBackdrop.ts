@@ -15,6 +15,7 @@ import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHangarUtil"
 import {MeshBatch} from "./SkyHangarBatch"
 import {SkyHangarSkyline} from "./SkyHangarSkyline"
+import {dayAmount} from "./SkyHangarRouteLook"
 import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, facadeTimeFor, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
 const DEG = Math.PI / 180
@@ -213,7 +214,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   /** ~70% neutral (concrete, stucco, brick, stone, off-white), ~25% muted (dusty teal, ochre, slate, sage), ~5% the one stronger accent. */
   private pickStyle(rnd: () => number): number {
     const r = rnd()
-    if (r < 0.7) return NEUTRAL_STYLES[Math.floor(rnd() * NEUTRAL_STYLES.length)]
+    if (r < 0.4) return NEUTRAL_STYLES[Math.floor(rnd() * NEUTRAL_STYLES.length)]
     if (r < 0.95) return MUTED_STYLES[Math.floor(rnd() * MUTED_STYLES.length)]
     return ACCENT_STYLE
   }
@@ -524,6 +525,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     this.light = smoothstep(0.3, 0.85, t)
     this.beaconLight = smoothstep(0.25, 0.7, t)
     if (this.skyline) this.skyline.setTimeOfDay(w, this.light)
+    this.sky.setDayAmount(dayAmount(w)) // the route lines and trails: amber, thicker and more opaque by day
     const horizon = mix3(HORIZON, w)
     const big = largeSurfaceFloor(w) // Day 0.65, Dusk 0.55, Night 0.45 for large flat surfaces
     // ambient colour taken from the sky: a gentle pull toward the horizon colour on top of the warm / cool tint

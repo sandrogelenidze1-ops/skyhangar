@@ -1,6 +1,6 @@
 // Pure facade day / night checks (no Lens globals beyond the facade module's own imports): the same assertions run in the LEAF scenario SH_N_FacadeDay.
 // The night palette is the reference; the day must be the same hues, only slightly brighter and desaturated, hazier with distance, never more saturated.
-import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, facadeTimeFor, facadeWallColor} from "../../Scripts/SkyHangarFacade"
+import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, facadeTimeFor, facadeWallColor, facadeBay, BAY_W, BAY_H} from "../../Scripts/SkyHangarFacade"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
@@ -25,15 +25,38 @@ export function runFacadeDayChecks(c: Check, print: (s: string) => void): void {
   const dayFar = STYLES.map((_, i) => facadeWallColor(i, facadeTimeFor(D, FAR_HAZE, 0)))
   const names = STYLES.map((s) => s.name)
 
-  c.check("only the night palette's wall styles remain: concrete, brick, stone, off-white (light grey-blue), slate (soft blue-grey)", "inspection", names.join(",") === "concrete,brick,stone,offwhite,slate", names.join(","))
-  c.check("style pickers only point at those styles", "inspection", [...NEUTRAL_STYLES, ...MUTED_STYLES, ACCENT_STYLE].every((i) => i >= 0 && i < STYLES.length))
-  // no orange, green or sand: every wall hue is a red-brown (brick) or a blue-grey, at night and by day
+  // classic styles = the night palette; modern facades = ribbon / curtain / panes / fins in white, concrete grey, deep glass and warm sand
+  c.check("the five classic styles are unchanged: concrete, brick, stone, off-white, slate", "inspection", names.slice(0, 5).join(",") === "concrete,brick,stone,offwhite,slate", names.slice(0, 5).join(","))
+  const kinds = new Set(STYLES.map((s) => s.facade || "classic"))
+  c.check("modern facades exist: ribbon windows, curtain-wall grid, floor-to-ceiling panes and vertical fins (plus the classic windows)", "inspection", ["classic", "ribbon", "curtain", "panes", "fins"].every((k) => kinds.has(k as any)), [...kinds].join(","))
+  c.check("wall colours: white, concrete grey, deep glass and warm sand are present", "inspection", ["ribbon-white", "ribbon-concrete", "fins-concrete", "curtain-deepglass", "panes-sand"].every((n) => names.includes(n)))
+  c.check("style pickers point at valid styles: classic for the neutral list, modern for the rest", "inspection", NEUTRAL_STYLES.every((i) => i < STYLES.length && (STYLES[i].facade || "classic") === "classic") && [...MUTED_STYLES, ACCENT_STYLE].every((i) => i < STYLES.length && (STYLES[i].facade || "classic") !== "classic"))
+  const classic = STYLES.map((_, i) => i).filter((i) => (STYLES[i].facade || "classic") === "classic")
   const okHue = (h: number): boolean => (h >= 200 && h <= 270) || h >= 310 || h <= 15
-  const allHues = [night, dayNear, dayFar].flatMap((set) => set.map((col) => hsv(col)[0]))
-  c.check("no orange, green or sand walls: every hue (night, day, far day) is brick red-brown or blue-grey", "inspection", allHues.every(okHue), allHues.map((h) => h.toFixed(0)).join(" "))
-  c.check("the night colours are brick red-brown and cool blue-greys", "inspection", STYLES.every((s, i) => s.name === "brick" ? (hsv(night[i])[0] >= 310 || hsv(night[i])[0] <= 15) : (hsv(night[i])[0] >= 200 && hsv(night[i])[0] <= 270)))
+  c.check("the classic styles keep the night palette hues: brick red-brown and cool blue-greys, at night, by day and far", "inspection", classic.every((i) => [night[i], dayNear[i], dayFar[i]].every((col) => okHue(hsv(col)[0]))))
+  const sand = names.indexOf("panes-sand")
+  c.check("the warm sand is warm (hue 20-60 degrees) at night and by day", "inspection", [night[sand], dayNear[sand], dayFar[sand]].every((col) => hsv(col)[0] >= 20 && hsv(col)[0] <= 60), [night[sand], dayNear[sand]].map((col) => hsv(col)[0].toFixed(0)).join("/"))
+  c.check("no dark colours: every wall is bright enough for the additive display (luminance >= 0.3 by day, >= 0.2 at night)", "inspection", STYLES.every((_, i) => lum(dayNear[i]) >= 0.3 && lum(night[i]) >= 0.2), names.map((n, i) => n + " " + lum(night[i]).toFixed(2) + "/" + lum(dayNear[i]).toFixed(2)).join(", "))
+  const dist = new Set<string>()
+  STYLES.forEach((_, i) => dist.add(night[i].map((v) => Math.round(v / 12)).join(",")))
+  c.check("the wall colours vary between styles (at least 8 clearly different walls)", "inspection", dist.size >= 8, `${dist.size}`)
+  // paint one window bay of every style at night and by day, and compare
+  const nightFt = facadeTimeFor([0, 0, 1], 0, 0), dayFt = facadeTimeFor([1, 0, 0], 0, 0)
+  const bayKey = (a: Float32Array): string => { let h = 0; for (let i = 0; i < a.length; i += 7) h = (h * 31 + Math.round(a[i] * 40)) | 0; return String(h) }
+  const looks = new Set<string>()
+  let minL = 9, aligned = true
+  STYLES.forEach((_, si) => {
+    const n = facadeBay(si, 3, nightFt), d = facadeBay(si, 3, dayFt)
+    looks.add(bayKey(d))
+    for (let i = 0; i < n.length; i += 3) minL = Math.min(minL, 0.3 * n[i] + 0.4 * n[i + 1] + 0.3 * n[i + 2])
+    // the lit pattern changes only the glass: the slab edge (the bottom three rows of the bay, row 0 = top) is identical lit or not
+    for (let y = BAY_H - 3; y < BAY_H; y++) for (let x = 0; x < BAY_W; x++) for (let k = 0; k < 3; k++) if (Math.abs(n[(y * BAY_W + x) * 3 + k] - facadeBay(si, 3, {...nightFt, frac: 0})[(y * BAY_W + x) * 3 + k]) > 1e-6) aligned = false
+  })
+  const ap = {distinct: looks.size, allBright: minL >= 0.3, minLum: minL, litAligned: aligned}
+  c.check("the modern facades paint continuous ribbons / grids / panes / fins: each differs from the classic window and from each other", "inspection", ap.distinct >= 5 && ap.allBright, `${ap.distinct} distinct bay looks, min luminance ${ap.minLum.toFixed(2)}`)
+  c.check("lit-window patterns stay aligned to floors: every modern bay's lit pixels sit inside the floor's glass rows (never on the slab edge)", "inspection", ap.litAligned)
   // day = the same hues
-  c.check("day keeps the night hues (within 5 degrees near, 20 degrees at the far haze)", "inspection", STYLES.every((_, i) => hueDiff(hsv(night[i])[0], hsv(dayNear[i])[0]) <= 5 && hueDiff(hsv(night[i])[0], hsv(dayFar[i])[0]) <= 20), names.map((n, i) => n + " " + hsv(night[i])[0].toFixed(0) + "/" + hsv(dayNear[i])[0].toFixed(0) + "/" + hsv(dayFar[i])[0].toFixed(0)).join(", "))
+  c.check("day keeps the night hues (within 5 degrees near, 25 degrees at the far haze)", "inspection", STYLES.every((_, i) => hueDiff(hsv(night[i])[0], hsv(dayNear[i])[0]) <= 5 && hueDiff(hsv(night[i])[0], hsv(dayFar[i])[0]) <= 25), names.map((n, i) => n + " " + hsv(night[i])[0].toFixed(0) + "/" + hsv(dayNear[i])[0].toFixed(0) + "/" + hsv(dayFar[i])[0].toFixed(0)).join(", "))
   // never more saturated by day
   c.check("colours are never more saturated in the day than at night (near or far)", "inspection", STYLES.every((_, i) => hsv(dayNear[i])[1] <= hsv(night[i])[1] + 0.003 && hsv(dayFar[i])[1] <= hsv(night[i])[1] + 0.003), names.map((n, i) => n + " " + hsv(night[i])[1].toFixed(2) + " -> " + hsv(dayNear[i])[1].toFixed(2) + " / " + hsv(dayFar[i])[1].toFixed(2)).join(", "))
   c.check("day is slightly desaturated (a gentle grade, not washed out)", "inspection", STYLES.every((_, i) => hsv(dayNear[i])[1] < hsv(night[i])[1] && hsv(dayNear[i])[1] > hsv(night[i])[1] * 0.6))

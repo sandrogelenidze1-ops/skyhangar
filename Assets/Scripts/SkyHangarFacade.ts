@@ -17,25 +17,39 @@ export const ATLAS_COLS = 12
 export const ROWS_PER_STYLE = 4 // 3 variant rows + 1 solid row
 export const ATLAS_W = BAY_W * ATLAS_COLS
 
+/** How the windows of a style are drawn: the classic framed window, or one of the modern facades. */
+export type FacadeKind = "classic" | "ribbon" | "curtain" | "panes" | "fins"
+
 export interface FacadeStyle {
   name: string
   wall: RGB
   frame: RGB
   accent: RGB // awning stripes
+  facade?: FacadeKind // default "classic"
+  tintMix?: number // how much of the cool night wall tint this style takes (default 1; the warm sand keeps most of its own warmth)
+  glassMul?: number // glass brightness (default 1; the deep-glass tower is a little deeper, but still lifted above the luminance floor)
 }
 
-// The night palette is the reference look, so the walls use ONLY its colours: muted brick red-brown, light grey-blue (off-white), concrete / stone and soft
-// blue-grey (slate). Time of Day never changes these hues: day is the same colours, only a little brighter, a little desaturated and a little hazier with distance.
+// Five classic styles (framed windows) in the night palette: muted brick red-brown, light grey-blue (off-white), concrete / stone and soft blue-grey. Time of Day
+// never changes these hues: day is the same colours, only a little brighter, a little desaturated and a little hazier with distance.
+// Six modern facades (each building gets one deterministically): continuous ribbon windows, a curtain-wall glass grid with thin mullions, large floor-to-ceiling
+// panes and a vertical-fin facade, in white, concrete grey, deep (but still bright enough) glass and warm sand.
 export const STYLES: FacadeStyle[] = [
   {name: "concrete", wall: [0.8, 0.76, 0.7], frame: [0.95, 0.94, 0.9], accent: [0.62, 0.45, 0.38]},
   {name: "brick", wall: [0.72, 0.46, 0.38], frame: [0.93, 0.9, 0.84], accent: [0.52, 0.6, 0.7]},
   {name: "stone", wall: [0.78, 0.75, 0.7], frame: [0.4, 0.46, 0.52], accent: [0.62, 0.45, 0.38]},
   {name: "offwhite", wall: [0.93, 0.91, 0.85], frame: [0.42, 0.5, 0.56], accent: [0.52, 0.6, 0.7]},
-  {name: "slate", wall: [0.52, 0.6, 0.7], frame: [0.94, 0.95, 0.96], accent: [0.62, 0.45, 0.38]}
+  {name: "slate", wall: [0.52, 0.6, 0.7], frame: [0.94, 0.95, 0.96], accent: [0.62, 0.45, 0.38]},
+  {name: "ribbon-white", wall: [0.95, 0.95, 0.96], frame: [0.5, 0.58, 0.66], accent: [0.52, 0.6, 0.7], facade: "ribbon"},
+  {name: "ribbon-concrete", wall: [0.7, 0.71, 0.73], frame: [0.9, 0.92, 0.94], accent: [0.52, 0.6, 0.7], facade: "ribbon"},
+  {name: "curtain-deepglass", wall: [0.5, 0.58, 0.68], frame: [0.82, 0.86, 0.9], accent: [0.52, 0.6, 0.7], facade: "curtain", glassMul: 0.85, tintMix: 0.6},
+  {name: "curtain-glass", wall: [0.72, 0.8, 0.88], frame: [0.95, 0.96, 0.97], accent: [0.52, 0.6, 0.7], facade: "curtain"},
+  {name: "panes-sand", wall: [0.86, 0.78, 0.6], frame: [0.64, 0.56, 0.42], accent: [0.62, 0.45, 0.38], facade: "panes", tintMix: 0.4},
+  {name: "fins-concrete", wall: [0.72, 0.73, 0.75], frame: [0.5, 0.58, 0.66], accent: [0.52, 0.6, 0.7], facade: "fins"}
 ]
-export const NEUTRAL_STYLES = [0, 1, 2, 3]
-export const MUTED_STYLES = [4]
-export const ACCENT_STYLE = 1
+export const NEUTRAL_STYLES = [0, 1, 2, 3, 4] // classic windows
+export const MUTED_STYLES = [5, 6, 7, 8, 9, 10] // modern facades
+export const ACCENT_STYLE = 5
 export const ATLAS_H = STYLES.length * ROWS_PER_STYLE * BAY_H
 
 export interface BayVariant {
@@ -109,6 +123,7 @@ function sm(a: number, b: number, x: number): number { const t = Math.max(0, Mat
 interface Pal {
   wall: RGB; wallHi: RGB; band: RGB; bandHi: RGB; bandLo: RGB; frame: RGB; accent: RGB; accent2: RGB
   glassTop: RGB; glassBot: RGB; metal: RGB; acBody: RGB; slot: RGB; cap: RGB; tank: RGB
+  kind: FacadeKind
 }
 
 /** One palette for a style at the given time of day and shade (1 = lit side, 0.78 = shaded side): every colour is lifted to the luminance floor. */
@@ -120,7 +135,10 @@ function makePalette(st: FacadeStyle, ft: FacadeTime, shade: number): Pal {
     return mixc([0, 1, 2].map((q) => (l + (c[q] - l) * d) * k), HAZE_COLOR, ft.haze)
   }
   const lift = (c: number[]): RGB => minLuminance(grade(c.map((x) => Math.min(1, x))), ft.floor)
-  const wall0 = [0, 1, 2].map((k) => st.wall[k] * ft.tint[k])
+  const tm = st.tintMix === undefined ? 1 : st.tintMix
+  const tint = [0, 1, 2].map((k) => 1 + (ft.tint[k] - 1) * tm) // the night wall tint (the reference hues), softened for the warm sand
+  const gm = st.glassMul === undefined ? 1 : st.glassMul
+  const wall0 = [0, 1, 2].map((k) => st.wall[k] * tint[k])
   const wall = lift(mul(wall0, shade))
   return {
     wall,
@@ -128,16 +146,17 @@ function makePalette(st: FacadeStyle, ft: FacadeTime, shade: number): Pal {
     band: lift(mul(wall0, 1.05 * shade)),
     bandHi: lift(mul(wall0, 1.16 * shade)),
     bandLo: lift(mul(wall0, 0.88 * shade)),
-    frame: lift(mul(st.frame.map((x, k) => x * ft.tint[k]), shade)),
-    accent: lift(mul(st.accent.map((x, k) => x * ft.tint[k]), shade)),
-    accent2: lift(mul([1, 0.97, 0.92].map((x, k) => x * ft.tint[k]), shade)),
-    glassTop: lift(mul(ft.glass.map((x) => x * 1.12), shade)),
-    glassBot: lift(mul(ft.glass.map((x) => x * 0.84), shade)),
+    frame: lift(mul(st.frame.map((x, k) => x * tint[k]), shade)),
+    accent: lift(mul(st.accent.map((x, k) => x * tint[k]), shade)),
+    accent2: lift(mul([1, 0.97, 0.92].map((x, k) => x * tint[k]), shade)),
+    glassTop: lift(mul(ft.glass.map((x) => x * 1.12 * gm), shade)),
+    glassBot: lift(mul(ft.glass.map((x) => x * 0.84 * gm), shade)),
     metal: lift(mul([0.5, 0.55, 0.62], shade)),
     acBody: lift(mul([0.9, 0.92, 0.93], shade)),
     slot: lift(mul([0.55, 0.58, 0.64], shade)),
     cap: lift(mul(wall0.map((x) => x * 0.4 + 0.58), shade)),
-    tank: lift(mul([0.82, 0.86, 0.92].map((x, k) => x * ft.tint[k]), shade))
+    tank: lift(mul([0.82, 0.86, 0.92].map((x, k) => x * tint[k]), shade)),
+    kind: st.facade || "classic"
   }
 }
 
@@ -148,6 +167,45 @@ function put(x: number, y: number, c: number[]): void {
 }
 function fill(x0: number, y0: number, x1: number, y1: number, c: number[]): void {
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, c)
+}
+
+/** How lit one pane of a bay is (0..1): each pane k has its own threshold, so the lit pattern varies along a floor but always stays inside its floor. */
+function paneLit(v: BayVariant, vi: number, ft: FacadeTime, k: number): number {
+  const th = (v.thr * 0.97 + 0.31 * k) % 1
+  let lit = sm(th, th + 0.1, ft.frac)
+  if (v.flick) lit *= 0.78 + 0.22 * Math.sin(ft.t * 3.3 + vi * 1.9)
+  return lit
+}
+
+/** The modern facades. One bay = one floor (rows 0..20 are the floor, 21..23 the slab edge, already painted), so every lit pattern follows the floors. */
+function paintModern(v: BayVariant, vi: number, P: Pal, ft: FacadeTime): void {
+  const glass = (y: number, y0: number, y1: number): RGB => mixc(P.glassTop, P.glassBot, (y - y0) / Math.max(1, y1 - y0))
+  const lit = (k: number): number => paneLit(v, vi, ft, k)
+  if (P.kind === "ribbon") { // a continuous horizontal band of glass across the whole bay (and so across the whole building)
+    fill(0, 4, BAY_W - 1, 4, P.frame)
+    fill(0, 17, BAY_W - 1, 17, P.frame)
+    for (let y = 5; y <= 16; y++) for (let x = 0; x < BAY_W; x++) put(x, y, mixc(glass(y, 5, 16), v.warm, lit(x < 10 ? 0 : 1) * 0.9))
+    fill(0, 18, BAY_W - 1, 18, P.bandHi) // slab edge under the ribbon
+  } else if (P.kind === "curtain") { // glass grid: 2 x 2 panes per bay, thin mullions and transoms
+    for (let y = 1; y <= 19; y++) for (let x = 0; x < BAY_W; x++) put(x, y, mixc(glass(y, 1, 19), v.warm, lit((x < 10 ? 0 : 1) + (y < 11 ? 0 : 2)) * 0.9))
+    fill(0, 1, 0, 20, P.frame)
+    fill(10, 1, 10, 20, P.frame)
+    fill(0, 1, BAY_W - 1, 1, P.frame)
+    fill(0, 11, BAY_W - 1, 11, P.frame)
+    fill(0, 20, BAY_W - 1, 20, P.frame)
+  } else if (P.kind === "panes") { // one large floor-to-ceiling pane with piers either side
+    fill(2, 1, 17, 20, P.frame)
+    for (let y = 2; y <= 19; y++) fill(3, y, 16, y, mixc(glass(y, 2, 19), v.warm, lit(0) * 0.9))
+    fill(2, 20, 17, 20, P.bandHi)
+  } else { // fins: vertical wall fins every 5 px with a glass strip between them
+    for (let y = 1; y <= 19; y++) {
+      for (let x = 0; x < BAY_W; x++) {
+        if (x % 5 < 2) put(x, y, P.bandHi)
+        else put(x, y, mixc(glass(y, 1, 19), v.warm, lit(Math.floor(x / 5)) * 0.9))
+      }
+    }
+    fill(0, 20, BAY_W - 1, 20, P.bandLo)
+  }
 }
 
 function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: FacadeTime): void {
@@ -185,6 +243,7 @@ function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: Facade
     fill(2, 8, 17, 8, P.frame)
     return
   }
+  if (P.kind !== "classic") { paintModern(v, vi, P, ft); return } // the modern facades draw their own windows (AC / balcony / fire-escape variants become plain bays)
   // window: frame, glass (top lighter), mullion + transom, sill
   fill(4, 4, 15, 17, P.frame)
   for (let y = 5; y <= 16; y++) fill(5, y, 14, y, mixc(mixc(P.glassTop, P.glassBot, (y - 5) / 11), v.warm, lit))
@@ -228,6 +287,13 @@ function writeCell(d: Uint8Array, col: number, row: number): void {
 export function facadeWallColor(style: number, ft: FacadeTime): number[] {
   const t = editorTone(makePalette(STYLES[style], ft, 1).wall)
   return t.map((v) => Math.round(255 * v))
+}
+
+/** One painted window bay (BAY_W x BAY_H x 3 floats, row 0 = top) of a style and variant: what the atlas cell holds before the editor tone. For checks. */
+export function facadeBay(style: number, vi: number, ft: FacadeTime): Float32Array {
+  const pal = makePalette(STYLES[style], ft, 1), palShade = makePalette(STYLES[style], ft, 0.78)
+  paintBay(VARIANTS[vi], vi, pal, palShade, ft)
+  return buf.slice()
 }
 
 /** Repaint a whole atlas (every style, every variant): palette lifted to the floor, editor tone baked in. */

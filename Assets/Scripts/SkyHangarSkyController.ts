@@ -15,6 +15,7 @@ import {AIRPORTS, SKY_OBJECTS, SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
 import {MARK, STROKE, TRAIL} from "./SkyHangarSharedUI"
 import {buildPlaneRoute, getObserver, heliTrack, horizonSpan} from "./SkyHangarRouteGeo"
+import {routeColor, routeWidthMul, routeOpacityMul} from "./SkyHangarRouteLook"
 import {PartKit, makeObj, skyDir, skyTangent, clamp01, DEG} from "./SkyHangarUtil"
 import {AimCandidate, HOVER_KEEP_SECONDS, TAP_MAX_SECONDS, dragStarted, isTap, pickAimTarget, rayMoveCm} from "./SkyHangarInput"
 
@@ -216,6 +217,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   private allRoutes = false
   private routesRoot: SceneObject | null = null
   private routeSets: {[id: string]: TrailSet} = {}
+  private dayAmt = 0 // 0 at night .. 1 by day: the route and trail lines turn amber, thicker and more opaque (see SkyHangarRouteLook)
   private aimedId = ""
   private reticle!: SceneObject
   private reticleMat!: Material
@@ -524,12 +526,36 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     else if (this.allRoutes && this.routeSets[m.info.id]) this.updateTrail(this.routeSets[m.info.id], m)
   }
 
-  /** Dot materials re-tinted for the object being aimed at (alpha per level is fixed). */
+  /**
+   * Day look of the route lines and trails (0 at night .. 1 by day), called from the preview backdrop's Time of Day update (never on a device). By day the lines are a
+   * saturated warm amber, 1.5x thicker and more opaque, so they stand out from the bright sky. Cheap: only when the value moved a little.
+   */
+  setDayAmount(day: number): void {
+    const d = Math.max(0, Math.min(1, day))
+    if (Math.abs(d - this.dayAmt) < 0.02 && !((d === 0 || d === 1) && d !== this.dayAmt)) return
+    this.dayAmt = d
+    if (!this.built) return
+    const sets: TrailSet[] = [this.main]
+    for (const id in this.routeSets) sets.push(this.routeSets[id])
+    for (const t of sets) {
+      if (!t) continue
+      this.tintTrail(t, t.rgb, t.boost) // colour + opacity of the ribbon and the dots
+      t.lastS = NaN // the ribbon is laid again (new width) the next time the trail updates
+      const dotCm = this.dotSizeCm()
+      for (let k = 0; k < t.dotCount; k++) t.dots[k].obj.getTransform().setLocalScale(new vec3(dotCm, dotCm, dotCm))
+    }
+  }
+  getDayAmount(): number { return this.dayAmt }
+  private dotSizeCm(): number { return this.skyDomeRadiusCm * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2) * routeWidthMul(this.dayAmt) }
+
+  /** Dot materials re-tinted for the object being aimed at (alpha per level is fixed); `c` is the kind's night colour, the day look is applied on top. */
   private tintTrail(t: TrailSet, c: vec3, boost: number): void {
     t.rgb = c
     t.boost = boost
-    t.ribbon.setColor(new vec4(c.x, c.y, c.z, 1))
-    for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(c.x, c.y, c.z, Math.min(1, ((l + 1) / t.mats.length) * t.alphaScale * boost))
+    const col = routeColor([c.x, c.y, c.z], this.dayAmt)
+    const op = routeOpacityMul(this.dayAmt)
+    t.ribbon.setColor(new vec4(col[0], col[1], col[2], 1))
+    for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(col[0], col[1], col[2], Math.min(1, ((l + 1) / t.mats.length) * t.alphaScale * boost * op))
   }
   private setLevel(t: TrailSet, s: Seg, alpha: number): void {
     const n = t.mats.length
@@ -585,7 +611,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     t.dotCount = 0
     if (kind === "plane" || kind === "helicopter") {
       t.dotCount = Math.min(t.dots.length, Math.floor(total / (DOT_SPACING_DEG * DEG)))
-      const dotCm = r * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2)
+      const dotCm = this.dotSizeCm()
       for (let k = 0; k < t.dotCount; k++) {
         const sk = (k + 1) * DOT_SPACING_DEG * DEG
         t.dotS.push(sk)
@@ -620,7 +646,8 @@ export class SkyHangarSkyController extends BaseScriptComponent {
         const pts: vec3[] = []
         const hw: number[] = []
         const al: number[] = []
-        const halfW = (STROKE.at(r) * (TRAIL.widthMm / 1.5) * t.widthScale) / 2
+        const halfW = (STROKE.at(r) * (TRAIL.widthMm / 1.5) * t.widthScale * routeWidthMul(this.dayAmt)) / 2
+        const dayOp = routeOpacityMul(this.dayAmt)
         const cap = halfW * 2
         for (let i = 0; i < N; i++) {
           const x = (x1 * i) / (N - 1)
@@ -632,7 +659,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
           // Opacity depends on elevation only (smoothstep between fadeStartElevDeg and fadeEndElevDeg); the only other fade is the short
           // soft end where the line stops just short of the glyph.
           const a = (sat ? TRAIL.peakBehind * 0.8 : TRAIL.peakBehind * smoothstep01((x1 - x) / (RIBBON_END_FADE_DEG * DEG))) * (m.oldFadeRad > 0 ? smoothstep01(x / m.oldFadeRad) : 1)
-          al.push(Math.min(1, a * this.elevFade(pd.y) * t.alphaScale * t.boost))
+          al.push(Math.min(1, a * this.elevFade(pd.y) * t.alphaScale * t.boost * dayOp))
         }
         t.ribbon.setVisible(true)
         t.ribbon.fill(pts, hw, al)
