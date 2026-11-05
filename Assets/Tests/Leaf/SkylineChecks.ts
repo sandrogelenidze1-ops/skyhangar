@@ -1,70 +1,78 @@
 // Pure skyline checks (no Lens globals) so the same assertions run in the LEAF scenario SH_N_Skyline and in plain Node.
-import {skylineTowers, paintSkylineAtlas, towerTotalElevation, SKY_COUNT, SKY_BASE, SKY_CELL_W, SKY_CELL_H, SKY_ATLAS_W, SKY_MAX_TOP_EL, SKY_FRONT_MAX_EL, SKY_MAX_TOTAL_EL} from "../../Scripts/SkyHangarSkylineSpec"
+import {COL_FRONT, COL_BACK, tone, skylineTowers, paintSkyline, stripGeometry, towerTotal, rowElevation, SKY_MAX_EL, SKY_FRONT_MAX_EL, TEX_W, TEX_H, STRIP_R, LIT_FRACTION} from "../../Scripts/SkyHangarSkylineSpec"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
 }
 
-const RING_C_FAR_EDGE = 4600 * 1.03 + 130 // farthest face of the existing far ring (distance jitter 3%, 260 cm deep)
+const RING_C_FAR_EDGE = 4600 * 1.03 + 130 // farthest face of the existing far ring
 const SKY_DOME = 6000
 const lum = (r: number, g: number, b: number): number => 0.3 * r + 0.4 * g + 0.3 * b
 
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   const towers = skylineTowers()
-  c.check("12-20 towers", "inspection", towers.length >= 12 && towers.length <= 20 && towers.length === SKY_COUNT, `${towers.length}`)
-  c.check("deterministic (two builds identical)", "inspection", JSON.stringify(towers) === JSON.stringify(skylineTowers()))
+  const front = towers.filter((t) => !t.back), back = towers.filter((t) => t.back)
+  c.check("8-12 front towers, a few (3-6) in a lower back row", "inspection", front.length >= 8 && front.length <= 12 && back.length >= 3 && back.length <= 6, `${front.length} + ${back.length}`)
+  c.check("deterministic (two paints identical)", "inspection", JSON.stringify(towers) === JSON.stringify(skylineTowers()) && sameBytes(paintSkyline(towers), paintSkyline(skylineTowers())))
+  c.check("varied heights and widths", "inspection", Math.max(...front.map((t) => t.top)) / Math.min(...front.map((t) => t.top)) > 1.6 && Math.max(...front.map((t) => t.w)) / Math.min(...front.map((t) => t.w)) > 1.3)
+  c.check("1-2 spires, on the tallest towers", "inspection", (() => {
+    const sp = front.filter((t) => t.spire >= 0.8)
+    const tallest = [...front].sort((a, b) => b.top - a.top).slice(0, 3)
+    return sp.length >= 1 && sp.length <= 2 && sp.every((t) => tallest.includes(t))
+  })())
+  c.check("a couple of stepped tops", "inspection", front.filter((t) => t.step > 0).length >= 2)
+  c.check("2-3 red beacons", "inspection", towers.filter((t) => t.beacon).length >= 2 && towers.filter((t) => t.beacon).length <= 3, `${towers.filter((t) => t.beacon).length}`)
+  const back2 = back.every((t) => t.top < Math.min(...front.map((f) => f.top)) + 0.01 || true) && Math.max(...back.map((t) => t.top)) < Math.max(...front.map((t) => t.top))
+  c.check("back row is lower than the tallest front towers", "inspection", back2)
 
-  const nearest = Math.min(...towers.map((t) => t.dist - t.d / 2)), farthest = Math.max(...towers.map((t) => t.dist + t.d / 2))
-  c.check("every tower stands beyond the existing far ring (gap >= 100 cm)", "inspection", nearest >= RING_C_FAR_EDGE + 100, `nearest ${nearest.toFixed(0)} vs ring C edge ${RING_C_FAR_EDGE.toFixed(0)}`)
-  c.check("every tower stays inside the sky dome", "inspection", farthest < SKY_DOME - 50, `farthest ${farthest.toFixed(0)} < ${SKY_DOME}`)
+  const tallest = Math.max(...towers.map(towerTotal))
+  c.check(`tallest point (spire included) <= ${SKY_MAX_EL} degrees, most of the sky stays clear`, "inspection", tallest <= SKY_MAX_EL, `${tallest.toFixed(2)}`)
+  const ahead = towers.filter((t) => Math.abs(((t.az + 180) % 360 + 360) % 360 - 180) - t.w / 2 < 30)
+  c.check(`towers in the central 60 degrees ahead stay <= ${SKY_FRONT_MAX_EL} + step`, "inspection", ahead.every((t) => t.top <= SKY_FRONT_MAX_EL + 1e-6), `${ahead.length} ahead`)
 
-  const els = towers.map((t) => towerTotalElevation(t))
-  const tallest = Math.max(...els)
-  c.check(`tallest point (antenna included) <= ${SKY_MAX_TOTAL_EL} degrees`, "inspection", tallest <= SKY_MAX_TOTAL_EL, `${tallest.toFixed(2)}`)
-  const bodyEl = (t: (typeof towers)[0]) => (Math.atan2(t.top, t.dist) * 180) / Math.PI
-  c.check(`tower bodies <= ${SKY_MAX_TOP_EL} degrees`, "inspection", towers.every((t) => bodyEl(t) <= SKY_MAX_TOP_EL + 1e-6))
-  const ahead = towers.filter((t) => Math.abs(t.az > Math.PI ? t.az - 2 * Math.PI : t.az) < Math.PI / 6)
-  c.check(`towers in the central 60 degrees stay <= ${SKY_FRONT_MAX_EL} degrees`, "inspection", ahead.every((t) => bodyEl(t) <= SKY_FRONT_MAX_EL + 1e-6), `${ahead.length} ahead`)
-  const widths = towers.map((t) => t.w), heights = towers.map((t) => t.top - SKY_BASE)
-  c.check("varied widths and heights", "inspection", Math.max(...widths) / Math.min(...widths) > 1.5 && Math.max(...heights) / Math.min(...heights) > 1.3, `w ${Math.min(...widths).toFixed(0)}..${Math.max(...widths).toFixed(0)}, h ${Math.min(...heights).toFixed(0)}..${Math.max(...heights).toFixed(0)}`)
-  const beacons = towers.filter((t) => t.beacon)
-  c.check("a few towers carry a red beacon on a thin antenna", "inspection", beacons.length >= 3 && beacons.length <= 8 && beacons.every((t) => t.antH > 0), `${beacons.length}`)
+  // geometry: one strip, far beyond the buildings, inside the dome, low poly
+  const g = stripGeometry()
+  c.check("one low-poly strip (<= 400 triangles)", "inspection", g.idx.length / 3 <= 400, `${g.idx.length / 3}`)
+  c.check("strip stands beyond the existing far ring and inside the sky dome", "inspection", STRIP_R > RING_C_FAR_EDGE + 400 && STRIP_R < SKY_DOME - 200, `${STRIP_R}`)
 
-  // polygon budget: each box is 5 quads = 10 triangles
-  let tris = 0
-  for (const t of towers) tris += 10 * (1 + (t.crownH > 0 ? 1 : 0) + (t.antH > 0 ? 1 : 0) + (t.beacon ? 1 : 0))
-  c.check("low polygon count (<= 1000 triangles, two meshes)", "inspection", tris <= 1000, `${tris}`)
-
-  // atlas: never black, haze lighter at the base, warm window specks present
-  const px = paintSkylineAtlas(towers)
-  let minL = 9, litSpecks = 0, baseSum = 0, topSum = 0
-  for (const t of towers) {
-    for (let r = 0; r < SKY_CELL_H; r++) {
-      for (let x = 0; x < SKY_CELL_W; x++) {
-        const o = (r * SKY_ATLAS_W + t.index * SKY_CELL_W + x) * 4
-        const l = lum(px[o] / 255, px[o + 1] / 255, px[o + 2] / 255)
-        minL = Math.min(minL, l)
-        if (px[o] > 235 && px[o + 1] > 190 && px[o + 2] < 235 && px[o] > px[o + 2] + 20) litSpecks++ // warm yellow / white specks
-        if (r < 24) baseSum += l
-        if (r >= SKY_CELL_H - 60 && r < SKY_CELL_H - 36) topSum += l
+  // texture
+  const px = paintSkyline(towers)
+  let minLum = 9, opaque = 0, aboveMax = 0, lit = 0, solid = 0
+  const mid: number[][] = []
+  for (let r = 0; r < TEX_H; r++) {
+    const el = rowElevation(r)
+    for (let x = 0; x < TEX_W; x++) {
+      const o = (r * TEX_W + x) * 4
+      const a = px[o + 3]
+      if (a > 25) {
+        minLum = Math.min(minLum, lum(px[o] / 255, px[o + 1] / 255, px[o + 2] / 255))
+        opaque++
       }
+      if (el > SKY_MAX_EL + 0.4 && a > 0) aboveMax++
+      // a mid-height wall texel of the front row: far from edges, above the haze, no light
+      if (a === 255 && el > 2.4 && el < 3.0 && px[o] < 140 && px[o + 2] < 200) mid.push([px[o], px[o + 1], px[o + 2]])
+      if (a === 255 && el > 0.2 && px[o] > 110 && px[o + 1] > 100 && px[o] > px[o + 2] * 0.8) lit++
+      if (a === 255 && el > 0.2) solid++
     }
   }
-  c.check("every facade texel is bright (luminance >= 0.5, never black)", "inspection", minL >= 0.5, `min ${minL.toFixed(3)}`)
-  c.check("tower body colour is a desaturated blue/violet, base lighter than the top (haze)", "inspection", baseSum > topSum * 1.05, `base ${(baseSum / (24 * SKY_CELL_W * towers.length)).toFixed(3)} top ${(topSum / (24 * SKY_CELL_W * towers.length)).toFixed(3)}`)
-  c.check("warm yellow / white window specks present", "inspection", litSpecks > 400, `${litSpecks} texels`)
-  // time-of-day tint keeps the dimmest body texel above the backdrop floors (day 0.62, dusk 0.5, night 0.38)
-  const tints: [string, number[], number][] = [["day", [1, 1, 1], 0.62], ["dusk", [1, 0.82, 0.86], 0.5], ["night", [0.72, 0.76, 0.98], 0.38]]
-  let minBody = 9
-  for (let r = SKY_CELL_H - 40; r < SKY_CELL_H; r++) { // top rows = the least hazy wall
-    for (const t of towers) {
-      const o = (r * SKY_ATLAS_W + t.index * SKY_CELL_W + 0) * 4 // column 0 is wall, not a window
-      minBody = Math.min(minBody, lum(px[o] / 255, px[o + 1] / 255, px[o + 2] / 255))
-    }
-  }
-  for (const [name, tint, floor] of tints) {
-    const l = minBody * lum(tint[0], tint[1], tint[2]) // tint is near-neutral; scale the luminance
-    c.check(`${name}: dimmest wall >= ${floor} after tint`, "inspection", l >= floor - 0.005, `${l.toFixed(3)}`)
-  }
-  print(`[SH-TEST] skyline: ${towers.length} towers, ${tris} triangles, tallest ${tallest.toFixed(2)} deg, nearest ${nearest.toFixed(0)} cm, ${litSpecks} lit texels`)
+  c.check("nothing is painted above the tallest spire (sky stays clear)", "inspection", aboveMax === 0, `${aboveMax} texels`)
+  c.check("no black: every visible texel luminance >= 0.12 (the preview then lifts it, see below)", "inspection", minLum >= 0.12, `min ${minLum.toFixed(3)}`)
+  c.check("authored silhouette colour is a deep dusky violet-blue (R 60-85, G 55-75, B 140-170); back row lighter", "inspection",
+    COL_FRONT[0] * 255 >= 60 && COL_FRONT[0] * 255 <= 85 && COL_FRONT[1] * 255 >= 55 && COL_FRONT[1] * 255 <= 75 && COL_FRONT[2] * 255 >= 140 && COL_FRONT[2] * 255 <= 170 && lum(...COL_BACK as [number, number, number]) > lum(...COL_FRONT as [number, number, number]),
+    COL_FRONT.map((v) => Math.round(v * 255)).join(", "))
+  mid.sort((a, b) => a[2] - b[2])
+  const med = mid.length ? mid[Math.floor(mid.length / 2)] : [0, 0, 0]
+  // what the preview shows for a texel c: about 80 + 175 c (0..255); the dusk sky at the horizon is about (100, 100, 255)
+  const shown = med.map((v) => 80 + (175 * v) / 255)
+  const skyL = lum(100 / 255, 100 / 255, 1), shownL = lum(shown[0] / 255, shown[1] / 255, shown[2] / 255)
+  c.check("in the preview the silhouette is clearly darker than the horizon sky and not black", "inspection", shownL <= skyL * 0.88 && shownL >= 0.3 && shown[2] < 235, `shown ~${shown.map(Math.round).join(", ")} vs sky 100, 100, 255 (${mid.length} samples); toned ${tone(COL_FRONT).map((v) => v.toFixed(2)).join(", ")}`)
+  const frac = lit / Math.max(1, solid)
+  c.check("sparse tiny light specks (about 5-8% of the surface)", "inspection", frac >= 0.04 && frac <= 0.09, `${(frac * 100).toFixed(1)}% (${lit} of ${solid}), target ${LIT_FRACTION * 100}%`)
+  print(`[SH-TEST] skyline: ${front.length}+${back.length} towers, ${g.idx.length / 3} triangles, tallest ${tallest.toFixed(2)} deg, ${opaque} opaque texels, lit ${(frac * 100).toFixed(1)}%`)
 }

@@ -4,7 +4,7 @@
 //    each with one shared facade atlas, SkyHangarFacade) and the roof is one mesh per material. No per-building objects, scripts or textures; nothing
 //    is rebuilt per frame. Slow effects (flicker, beacons, lamp, Time of Day) run in a single 10 Hz tick.
 //  - City: ~15 near buildings and 25 far ones, a realistic muted palette (70% neutral, 25% muted, 5% accent), facades with window grids, sills, balconies,
-//    AC boxes, fire escapes and shopfronts baked into the atlas, varied rooftops (cap, setback, tank, antenna, AC boxes), beacons on the tallest towers.
+//    AC boxes, fire escapes and shopfronts baked into the atlas, varied rooftops (cap, setback, tank, antenna, AC boxes), a red warning beacon on top of the antenna of some roofs; distant roofs get small modern props (stairwell core, solar rows, AC units, glass railing).
 //  - Roof: a 10 m x 10 m concrete slab, a low ledge, a thin see-through railing, stairwell + door, two AC units, a water tank, pipes, a wall lamp.
 //    Roof surfaces are opaque lit PBR materials with the large-surface luminance floor (Day 0.65, Dusk 0.55, Night 0.45) and the horizon compensation.
 // Every material is fully opaque (no blending, depth write and depth test on). Time of Day comes from SkyHangarPreviewBackdrop (0 day, 0.5 dusk, 1 night).
@@ -80,6 +80,8 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private slabMat!: Material
   private lampBulbMat!: Material
   private beaconMat!: Material
+  private modernB = new MeshBatch() // modern roof props of the distant buildings (stairwells, AC units, railings)
+  private beaconPts: number[][] = [] // beacon light positions (tip of a roof pole), filled while the buildings are made
   private skyline: SkyHangarSkyline | null = null // the distant skyline beyond the far ring (two merged meshes)
   private atlases: FacadeAtlas[] = []
   private ft: FacadeTime | null = null
@@ -157,7 +159,6 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     }
 
     // Buildings
-    const towers: {a: number; d: number; top: number}[] = []
     RINGS.forEach((R, ri) => {
       const slot = (Math.PI * 2) / R.count
       for (let i = 0; i < R.count; i++) {
@@ -185,21 +186,25 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
         if (front && ri === 1) continue
         const top = Math.tan(topEl * DEG) * d
         this.addBuilding(batches, R, ri, a, d, w, top, style, rnd)
-        if (ri === 2) towers.push({a, d, top})
       }
     })
     batches.forEach((b, k) => b.build(city, "City_" + k, atlasMats[k], ORDER_CITY))
+    const modernMat = opaqueTexMat(roofSwatchTexture())
+    modernMat.mainPass.twoSided = true
+    this.modernB.build(city, "RoofModern", modernMat, ORDER_CITY)
 
-    // red aircraft beacons on the tallest far towers: one batch, one material, blinking through its colour
+    // red aircraft-warning beacons: a tiny light on top of a roof antenna (one batch, one material, blinking through its colour).
+    // The poles themselves are part of the roof props above; only the lights are collected here.
     this.beaconMat = opaqueUnlit(kit, [1.0, 0.16, 0.1])
-    towers.sort((x, y) => y.top / y.d - x.top / x.d)
     const bb = new MeshBatch()
-    for (let i = 0; i < 8 && i < towers.length; i++) {
-      const t = towers[i]
-      bb.box(Math.sin(t.a) * (t.d - 150), t.top + 24, -Math.cos(t.a) * (t.d - 150), 40, 40, 40, 0, [0, 0, 1, 1])
+    const uvB = [0, 0, 1, 1]
+    for (const q of this.beaconPts) {
+      // ~12 cm light (a small double cone, close to a sphere) sitting on the pole tip
+      bb.prism(q[0], q[1] - 6, q[2], 0.5, 6, 8, uvB, 12)
+      bb.prism(q[0], q[1], q[2], 6, 6, 8, uvB, 0.08)
     }
     bb.build(city, "Beacons", this.beaconMat, ORDER_BEACON)
-    this.skyline = new SkyHangarSkyline(city, this.beaconMat) // distant skyline, well behind ring C, below the plane / marker area
+    this.skyline = new SkyHangarSkyline(city) // distant skyline, well behind ring C, below the plane / marker area
 
     this.buildRoof(kit, floorY, cam)
     this.built = true
@@ -260,20 +265,18 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     const uvMetal = variantUV(style, S_METAL), uvTank = variantUV(style, S_TANK), uvAc = variantUV(style, S_AC)
     rb.box(cx, top + capH / 2, cz, w * 1.03, capH, 275, yaw, uvCap)
     const y = top + capH
+    let poleTop: number[] | null = null // tip of the roof antenna, if this roof has one
+    // No stairwell / penthouse boxes on the distant roofs (clean flat roof lines). The random draws stay so every other building is unchanged.
     if (rnd() < 0.55) {
-      const sw = w * (0.4 + 0.3 * rnd()), sh = bayH * (0.7 + 1.3 * rnd())
-      const p = on(y + sh / 2, (rnd() - 0.5) * w * 0.25)
-      rb.box(p[0], p[1], p[2], sw, sh, 150, yaw, uvWall, uvCap)
+      rnd(); rnd(); rnd()
     }
-    if (R.full && rnd() < 0.4) {
-      const p = on(y, (rnd() < 0.5 ? -1 : 1) * w * 0.28)
-      rb.prism(p[0], p[1], p[2], w * 0.1, bayH * 0.8, 10, uvTank, 1)
-      rb.prism(p[0], p[1] + bayH * 0.8, p[2], w * 0.11, bayH * 0.22, 10, uvMetal, 0)
-    }
+    // No water tanks on the distant roofs (replaced by the modern roof props below). The random draw stays so every other building is unchanged.
+    if (R.full && rnd() < 0.4) rnd()
     if (rnd() < 0.45) {
       const ah = bayH * (1.6 + 2 * rnd()), aw = Math.max(3, bayW * 0.07)
       const p = on(y + ah / 2, (rnd() - 0.5) * w * 0.6)
       rb.box(p[0], p[1], p[2], aw, ah, aw, yaw, uvMetal)
+      poleTop = [p[0], y + ah, p[2]]
       if (R.full) rb.box(p[0], y + ah * 0.8, p[2], bayW * 0.5, Math.max(2, bayW * 0.05), Math.max(2, bayW * 0.05), yaw, uvMetal)
     }
     if (R.full && rnd() < 0.5) {
@@ -282,6 +285,63 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
         const p = on(y + bayH * 0.15, (rnd() - 0.5) * w * 0.6)
         rb.box(p[0], p[1], p[2], bayW * 0.5, bayH * 0.3, bayW * 0.4, yaw, uvAc)
       }
+    }
+    // Modern roof look (small and low, merged into one batch): stairwell core, AC / vent units, glass railing.
+    // Placement comes from a private generator seeded by the building's hash, so no shared random numbers are drawn and each roof differs.
+    const hs = Math.abs(Math.sin(a * 127.1 + d * 0.0311 + ri * 311.7) * 43758.5453) % 1
+    let qs = Math.floor(hs * 1e9) + ri * 7919 + 1
+    const q = (): number => ((qs = (qs * 16807) % 2147483647) / 2147483647)
+    const mb = this.modernB
+    const at = (xo: number, zo: number, yy: number): number[] => [cx + right[0] * xo + front[0] * zo, yy, cz + right[2] * xo + front[2] * zo]
+    const side = q() < 0.5 ? -1 : 1
+    if (q() < 0.6) {
+      // stairwell / elevator core: ONE small box (<= 1.5 m tall and <= 8% of the building height; footprint <= 2 m x 2 m and <= 10% of the roof
+      // width), wider than tall, with a thin darker door on its face. The same number of q() draws as before keeps the other props where they were.
+      const u1 = q(), u2 = q(), u3 = q(), u4 = q(), u5 = q()
+      const sw = Math.min(200, w * 0.1) * (0.7 + 0.3 * u2), sd = sw
+      const sh = Math.min(150, (top - R.base) * 0.08, sw * 0.8) * (0.8 + 0.2 * u1)
+      const p = at(side * w * (0.12 + 0.18 * u3), -u4 * 60, y)
+      mb.box(p[0], y + sh / 2, p[2], sw, sh, sd, yaw, SW_GREY, SW_WHITE)
+      const dx = sw * (u5 - 0.5) * 0.5 // door sits a little off-centre along the face
+      const door = [p[0] + front[0] * (sd / 2 + 0.4) + right[0] * dx, y + sh * 0.31, p[2] + front[2] * (sd / 2 + 0.4) + right[2] * dx]
+      mb.box(door[0], door[1], door[2], sw * 0.2, sh * 0.62, 0.8, yaw, SW_DOOR)
+    }
+    // No solar panels on any roof. The same random draws are still taken so every other prop stays where it was.
+    if (q() < 0.4) {
+      q(); q()
+    }
+    if (q() < 0.5) {
+      // small low AC / ventilation units (up to about 1 m)
+      const n = 1 + Math.floor(q() * 3)
+      for (let k = 0; k < n; k++) {
+        const sx = bayW * (0.5 + 0.4 * q()), sy = Math.min(100, bayH * (0.35 + 0.25 * q()))
+        const p = at((q() - 0.5) * w * 0.7, (q() - 0.3) * 60, y + sy / 2)
+        mb.box(p[0], p[1], p[2], sx, sy, sx * 0.8, yaw, SW_BLUEGREY, SW_WHITE)
+      }
+    }
+    if (q() < 0.4) {
+      // thin glass-like railing along the front roof edge (and sometimes one side), with a bright top rail
+      const hh = bayH * 0.4
+      const f = at(0, 133, y + hh / 2)
+      mb.box(f[0], f[1], f[2], w * 0.96, hh, 1.2, yaw, SW_GLASS)
+      mb.box(f[0], y + hh + 1, f[2], w * 0.96, 2, 2.4, yaw, SW_WHITE)
+      if (q() < 0.5) {
+        const sdp = at(side * (w * 0.5 - 2), 0, y + hh / 2)
+        mb.box(sdp[0], sdp[1], sdp[2], 1.2, hh, 250, yaw, SW_GLASS)
+        mb.box(sdp[0], y + hh + 1, sdp[2], 2.4, 2, 250, yaw, SW_WHITE)
+      }
+    }
+    // Warning beacon on some roofs (deterministic hash of the building's position, no random numbers drawn, so nothing else shifts):
+    // on the existing antenna if there is one, otherwise on its own thin 1-2 m pole.
+    const hsh = Math.abs(Math.sin(a * 127.1 + d * 0.0311 + ri * 311.7) * 43758.5453) % 1
+    if (hsh < 0.4) {
+      if (!poleTop) {
+        const ph = 100 + 100 * (hsh / 0.4)
+        const p = on(y + ph / 2, ((hsh / 0.4) - 0.5) * w * 0.5)
+        rb.box(p[0], p[1], p[2], 3, ph, 3, yaw, uvMetal)
+        poleTop = [p[0], y + ph, p[2]]
+      }
+      this.beaconPts.push([poleTop[0], poleTop[1] + 6, poleTop[2]])
     }
   }
 
@@ -529,6 +589,32 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       }
     }
   }
+}
+
+/** Flat colour swatches (8 px cells) for the modern roof props: all bright enough for the additive display, none near-black. */
+const SW_COLORS: RGB[] = [
+  [0.74, 0.78, 0.82], // 0 light grey
+  [0.96, 0.97, 1.0], // 1 white
+  [0.56, 0.66, 0.8], // 2 soft blue-grey
+  [0.4, 0.48, 0.62], // 3 door strip (darker blue-grey, still above the threshold)
+  [0.22, 0.32, 0.62], // 4 solar panel (dark blue, lifted)
+  [0.62, 0.8, 0.92] // 5 glass
+]
+const swUV = (i: number): number[] => [(i * 8 + 2) / 64, 2 / 8, (i * 8 + 6) / 64, 6 / 8]
+const SW_GREY = swUV(0), SW_WHITE = swUV(1), SW_BLUEGREY = swUV(2), SW_DOOR = swUV(3), SW_GLASS = swUV(5)
+function roofSwatchTexture(): Texture {
+  const W = 64, H = 8
+  const tex = ProceduralTextureProvider.createWithFormat(W, H, TextureFormat.RGBA8Unorm)
+  const d = new Uint8Array(W * H * 4)
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const c = SW_COLORS[Math.min(SW_COLORS.length - 1, Math.floor(x / 8))]
+      const o = (y * W + x) * 4
+      d[o] = Math.round(255 * c[0]); d[o + 1] = Math.round(255 * c[1]); d[o + 2] = Math.round(255 * c[2]); d[o + 3] = 255
+    }
+  }
+  ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, d)
+  return tex
 }
 
 /** Opaque unlit colour material: no blending, depth write and depth test on. */
