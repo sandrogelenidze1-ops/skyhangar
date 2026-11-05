@@ -1,7 +1,7 @@
 // Pure route-colour checks (no Lens globals) so the same assertions run in the LEAF scenario SH_N_RouteDay and in plain Node.
-// Night keeps the current colours; by day the route lines and trails are saturated warm amber (255, 150, 40), 1.5x thicker, more opaque, never dark,
-// and everything interpolates smoothly with the time of day.
-import {ROUTE_AMBER, DAY_WIDTH_MUL, DAY_OPACITY_MUL, dayAmount, routeColor, routeWidthMul, routeOpacityMul} from "../../Scripts/SkyHangarRouteLook"
+// Night keeps the current colours; by day (and dusk) the route lines and trails and the trail dots are a bright minimal neon green (80, 255, 140), fully opaque with a
+// slight glow and 1.5x thicker, never dark, and everything interpolates smoothly with the time of day.
+import {ROUTE_NEON, DAY_WIDTH_MUL, DAY_OPACITY_MUL, dayAmount, routeColor, routeWidthMul, routeOpacityMul, routeGlowAlpha} from "../../Scripts/SkyHangarRouteLook"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
@@ -21,16 +21,22 @@ const sat = (c: number[]): number => (Math.max(...c) - Math.min(...c)) / Math.ma
 
 export function runRouteDayChecks(c: Check, print: (s: string) => void): void {
   const night = [0, 0, 1], dusk = [0, 1, 0], day = [1, 0, 0]
-  c.check("the day amount is 0 at night, 1 by day and in between at dusk", "inspection", dayAmount(night) === 0 && dayAmount(day) === 1 && dayAmount(dusk) > 0 && dayAmount(dusk) < 1, `${dayAmount(night)} / ${dayAmount(dusk)} / ${dayAmount(day)}`)
+  c.check("the day amount is 0 at night, 1 by day and in between (mostly on) at dusk", "inspection", dayAmount(night) === 0 && dayAmount(day) === 1 && dayAmount(dusk) > 0 && dayAmount(dusk) < 1, `${dayAmount(night)} / ${dayAmount(dusk)} / ${dayAmount(day)}`)
   c.check("night: every kind keeps its current colour, thickness and opacity", "inspection", Object.keys(KINDS).every((k) => routeColor(KINDS[k], dayAmount(night)).every((v, i) => v === KINDS[k][i])) && routeWidthMul(0) === 1 && routeOpacityMul(0) === 1)
-  const amber = routeColor(KINDS.plane, 1)
-  c.check("day: a saturated warm amber / orange, RGB 255, 150, 40", "inspection", amber.map((v) => Math.round(v * 255)).join(",") === "255,150,40" && ROUTE_AMBER.every((v, i) => v === amber[i]), amber.map((v) => Math.round(v * 255)).join(","))
-  c.check("day: the same amber for every kind of trail (plane, helicopter, satellite)", "inspection", Object.keys(KINDS).every((k) => routeColor(KINDS[k], 1).every((v, i) => Math.abs(v - ROUTE_AMBER[i]) < 1e-9)))
-  c.check("day: about 1.5x thicker and with higher opacity", "inspection", Math.abs(routeWidthMul(1) - 1.5) < 1e-9 && DAY_WIDTH_MUL === 1.5 && routeOpacityMul(1) > 1.2 && routeOpacityMul(1) === DAY_OPACITY_MUL, `width x${routeWidthMul(1)}, opacity x${routeOpacityMul(1)}`)
-  // contrast with the blue day sky (about 150, 210, 255)
+  const neon = routeColor(KINDS.plane, 1)
+  c.check("day: bright neon green, RGB 80, 255, 140", "inspection", neon.map((v) => Math.round(v * 255)).join(",") === "80,255,140" && ROUTE_NEON.every((v, i) => v === neon[i]), neon.map((v) => Math.round(v * 255)).join(","))
+  c.check("day: the same green for every kind of trail and for the dotted trail dots", "inspection", Object.keys(KINDS).every((k) => routeColor(KINDS[k], 1).every((v, i) => Math.abs(v - ROUTE_NEON[i]) < 1e-9)))
+  c.check("day: 1.5x thicker", "inspection", Math.abs(routeWidthMul(1) - 1.5) < 1e-9 && DAY_WIDTH_MUL === 1.5, `x${routeWidthMul(1)}`)
+  // fully opaque: even the faint all-routes lines (0.55 of the pinned opacity, peak 0.9) reach 1 at full day, and the main trail (peak 0.9) too
+  c.check("day: fully opaque (the all-routes lines, 0.55 x 0.9 peak, and the main trail both reach full opacity)", "inspection", routeOpacityMul(1) === DAY_OPACITY_MUL && 0.55 * 0.9 * routeOpacityMul(1) >= 1 && 0.9 * routeOpacityMul(1) >= 1, `x${routeOpacityMul(1)}`)
+  c.check("day: a slight glow around the line; none at night", "inspection", routeGlowAlpha(1) > 0.1 && routeGlowAlpha(1) <= 0.4 && routeGlowAlpha(0) === 0, `${routeGlowAlpha(1)} / ${routeGlowAlpha(0)}`)
+  // contrast with the blue day sky (about 150, 210, 255) and the dusk sky (violet-orange, about 150, 90, 200): bright, saturated, high luminance
   const sky = [150 / 255, 210 / 255, 1]
-  const dh = Math.abs(hue(amber) - hue(sky)), hueGap = Math.min(dh, 360 - dh)
-  c.check("day: contrasts with the blue sky (hue at least 120 degrees away, saturated)", "inspection", hueGap >= 120 && sat(amber) >= 0.8, `hue gap ${hueGap.toFixed(0)}, saturation ${sat(amber).toFixed(2)}`)
+  const dh = Math.abs(hue(neon) - hue(sky)), hueGap = Math.min(dh, 360 - dh)
+  c.check("day: a saturated, bright green that stands apart from the sky (saturation >= 0.65, luminance >= 0.6, hue 40+ degrees from the blue day sky)", "inspection", sat(neon) >= 0.65 && lum(neon) >= 0.6 && hueGap >= 40, `sat ${sat(neon).toFixed(2)}, lum ${lum(neon).toFixed(2)}, hue gap ${hueGap.toFixed(0)}`)
+  const duskSky = [150 / 255, 90 / 255, 200 / 255]
+  const dh2 = Math.abs(hue(neon) - hue(duskSky)), hueGap2 = Math.min(dh2, 360 - dh2)
+  c.check("dusk: the green is used at dusk too and sits well apart from the dusk sky (hue 80+ degrees)", "inspection", dayAmount(dusk) >= 0.8 && hueGap2 >= 80, `dusk amount ${dayAmount(dusk)}, hue gap ${hueGap2.toFixed(0)}`)
   // never dark: no black or dark outline; every blend stays bright (black is see-through on the additive display)
   let minL = 9, smooth = true
   let prev: number[] | null = null, prevW = 0, prevO = 0
@@ -52,5 +58,5 @@ export function runRouteDayChecks(c: Check, print: (s: string) => void): void {
   let monoDay = true, last = -1
   for (let i = 0; i <= 20; i++) { const t = i / 20; const w = t <= 0.5 ? [1 - t * 2, t * 2, 0] : [0, 1 - (t - 0.5) * 2, (t - 0.5) * 2]; const d = dayAmount(w); if (last >= 0 && d > last + 1e-9) monoDay = false; last = d }
   c.check("going from day to night the day amount only falls", "inspection", monoDay)
-  print("[SH-TEST] route day look: amber " + amber.map((v) => Math.round(v * 255)).join(",") + ", width x" + routeWidthMul(1) + ", opacity x" + routeOpacityMul(1))
+  print("[SH-TEST] route day look: neon " + neon.map((v) => Math.round(v * 255)).join(",") + ", width x" + routeWidthMul(1) + ", opacity x" + routeOpacityMul(1))
 }

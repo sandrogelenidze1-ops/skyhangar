@@ -15,7 +15,7 @@ import {AIRPORTS, SKY_OBJECTS, SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
 import {MARK, STROKE, TRAIL} from "./SkyHangarSharedUI"
 import {buildPlaneRoute, getObserver, heliTrack, horizonSpan} from "./SkyHangarRouteGeo"
-import {routeColor, routeWidthMul, routeOpacityMul} from "./SkyHangarRouteLook"
+import {routeColor, routeWidthMul, routeOpacityMul, routeGlowAlpha, GLOW_WIDTH_MUL} from "./SkyHangarRouteLook"
 import {PartKit, makeObj, skyDir, skyTangent, clamp01, DEG} from "./SkyHangarUtil"
 import {AimCandidate, HOVER_KEEP_SECONDS, TAP_MAX_SECONDS, dragStarted, isTap, pickAimTarget, rayMoveCm} from "./SkyHangarInput"
 
@@ -109,6 +109,7 @@ const HORIZON_END_Y = Math.sin(-1 * DEG) // routes always run on to the horizon 
 interface TrailSet {
   root: SceneObject
   ribbon: Ribbon
+  glow: Ribbon // a wider, fainter copy of the line under it: the slight glow of the day look (hidden at night)
   rgb: vec3
   dots: Seg[]
   mats: Material[]
@@ -217,7 +218,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   private allRoutes = false
   private routesRoot: SceneObject | null = null
   private routeSets: {[id: string]: TrailSet} = {}
-  private dayAmt = 0 // 0 at night .. 1 by day: the route and trail lines turn amber, thicker and more opaque (see SkyHangarRouteLook)
+  private dayAmt = 0 // 0 at night .. 1 by day: the route and trail lines turn neon green, thicker and fully opaque (see SkyHangarRouteLook)
   private aimedId = ""
   private reticle!: SceneObject
   private reticleMat!: Material
@@ -448,6 +449,8 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       m.mainPass.baseColor = new vec4(1, 1, 1, ((l + 1) / TRAIL.levels) * alphaScale)
       mats.push(m)
     }
+    const glow = new Ribbon(root, "TrailGlow", RIBBON_SAMPLES, 3, LINE_EXTENT, LINE_CORE)
+    glow.setVisible(false)
     const ribbon = new Ribbon(root, "TrailLine", RIBBON_SAMPLES, 4, LINE_EXTENT, LINE_CORE)
     const dots: Seg[] = []
     for (let i = 0; i < dotN; i++) {
@@ -459,7 +462,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       dots.push({obj, rmv, level: -1})
     }
     root.enabled = false
-    return {root, ribbon, rgb: TRAIL_RGB.plane, dots, mats, alphaScale, boost: 1, widthScale: 1, lastS: NaN, dotS: [], dotElev: [], dotCount: 0, origin: null, dest: null, points: 0}
+    return {root, ribbon, glow, rgb: TRAIL_RGB.plane, dots, mats, alphaScale, boost: 1, widthScale: 1, lastS: NaN, dotS: [], dotElev: [], dotCount: 0, origin: null, dest: null, points: 0}
   }
 
   /** A fainter copy of the full trail (solid behind, dotted ahead, same gradient and width) for every vehicle, built once. */
@@ -528,7 +531,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
 
   /**
    * Day look of the route lines and trails (0 at night .. 1 by day), called from the preview backdrop's Time of Day update (never on a device). By day the lines are a
-   * saturated warm amber, 1.5x thicker and more opaque, so they stand out from the bright sky. Cheap: only when the value moved a little.
+   * bright neon green (RGB 80, 255, 140), 1.5x thicker, fully opaque with a slight glow, so they stand out from the bright sky. Cheap: only when the value moved a little.
    */
   setDayAmount(day: number): void {
     const d = Math.max(0, Math.min(1, day))
@@ -555,6 +558,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const col = routeColor([c.x, c.y, c.z], this.dayAmt)
     const op = routeOpacityMul(this.dayAmt)
     t.ribbon.setColor(new vec4(col[0], col[1], col[2], 1))
+    t.glow.setColor(new vec4(col[0], col[1], col[2], 1))
     for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(col[0], col[1], col[2], Math.min(1, ((l + 1) / t.mats.length) * t.alphaScale * boost * op))
   }
   private setLevel(t: TrailSet, s: Seg, alpha: number): void {
@@ -641,6 +645,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       const x1 = sat ? total : s - TRAIL.gapFromGlyphCm / r
       if (x1 <= 0.002) {
         t.ribbon.setVisible(false)
+        t.glow.setVisible(false)
       } else {
         const N = RIBBON_SAMPLES
         const pts: vec3[] = []
@@ -663,6 +668,12 @@ export class SkyHangarSkyController extends BaseScriptComponent {
         }
         t.ribbon.setVisible(true)
         t.ribbon.fill(pts, hw, al)
+        // the slight glow of the day look: the same line, wider and much fainter, in the same colour (no dark outline)
+        const ga = routeGlowAlpha(this.dayAmt)
+        if (ga > 0.005) {
+          t.glow.setVisible(true)
+          t.glow.fill(pts, hw.map((v) => v * GLOW_WIDTH_MUL), al.map((v) => v * ga))
+        } else t.glow.setVisible(false)
       }
     }
     if (kind === "satellite") return

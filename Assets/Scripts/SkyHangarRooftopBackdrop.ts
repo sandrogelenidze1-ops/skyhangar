@@ -16,7 +16,7 @@ import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHan
 import {MeshBatch} from "./SkyHangarBatch"
 import {SkyHangarSkyline} from "./SkyHangarSkyline"
 import {dayAmount} from "./SkyHangarRouteLook"
-import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, facadeTimeFor, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
+import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, facadeTimeFor, floorIsDark, darkVariant, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
 const DEG = Math.PI / 180
 
@@ -238,6 +238,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       const baseVisible = yBot <= base + 0.5
       const fireCol = rnd() < 0.15 ? 1 + Math.floor(rnd() * (cols - 2)) : -1
       const fc = [cx + front[0] * 136, 0, cz + front[2] * 136]
+      const bseed = Math.floor((Math.abs(Math.sin(a * 127.1 + d * 0.0311 + ri * 311.7) * 43758.5453) % 1) * 1e6) // per-building seed for the dark floors (no random numbers drawn)
       for (let r = 0; r < rows; r++) {
         const yT = top - r * bayH, yB = yT - bayH
         for (let c = 0; c < cols; c++) {
@@ -251,6 +252,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
             const q = rnd()
             vi = q < 0.07 ? V_AC + Math.floor(rnd() * 4) : q < 0.17 ? V_BALC + Math.floor(rnd() * 4) : V_WIN + Math.floor(rnd() * 12)
           }
+          if (floorIsDark(bseed, r)) vi = darkVariant(vi) // some floors are fully dark at night: the same bay look, but never lit
           const x0 = (c - cols / 2) * bayW, x1 = x0 + bayW
           bt.quad(
             [fc[0] + right[0] * x0, yB, fc[2] + right[2] * x0], [fc[0] + right[0] * x1, yB, fc[2] + right[2] * x1],

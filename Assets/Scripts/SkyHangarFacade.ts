@@ -58,7 +58,8 @@ export interface BayVariant {
   flick: boolean
   warm: RGB
 }
-const WARM: RGB[] = [[1.0, 0.82, 0.5], [1.0, 0.92, 0.7], [0.78, 0.9, 1.0], [1.0, 0.7, 0.45]]
+// ONE soft warm white-yellow for every lit window (the four entries differ by about 2% in tone only, so panes never show random hues)
+const WARM: RGB[] = [[1.0, 0.9, 0.68], [0.98, 0.88, 0.66], [1.0, 0.91, 0.69], [0.97, 0.89, 0.67]]
 export const VARIANTS: BayVariant[] = []
 for (let i = 0; i < 12; i++) VARIANTS.push({kind: "win", thr: (i + 0.5) / 12, flick: i < 2, warm: WARM[i % 4]})
 for (let i = 0; i < 4; i++) VARIANTS.push({kind: "ac", thr: (i + 0.5) / 4, flick: false, warm: WARM[i % 4]})
@@ -86,8 +87,29 @@ export interface FacadeTime {
 
 // ---- Time of Day for the facades (pure, so it can be checked under Node) ----
 export const NIGHT_TINT: RGB = [0.62, 0.66, 0.96] // the night wall tint: the reference hues
-const GLASS_TONE: RGB[] = [[0.64, 0.76, 0.88], [0.74, 0.66, 0.84], [0.34, 0.45, 0.82]] // bright blue-grey glass reflecting the sky, never black
-const LIT_FRAC = [0, 0.55, 0.35] // fraction of windows lit: none by day, 55% at dusk, 35% at night
+// ONE glass colour family, always blue: by day a calm, lighter, desaturated blue-grey; at night a deep blue (still lifted above the luminance floor, never black)
+const GLASS_TONE: RGB[] = [[0.62, 0.72, 0.84], [0.46, 0.57, 0.8], [0.3, 0.4, 0.74]]
+const LIT_FRAC = [0, 0.42, 0.42] // how far the lit threshold has risen: no lit windows by day; at dusk and night about 30% of all windows end up lit (see FLOOR_DARK)
+export const FLOOR_DARK = 0.18 // share of floors that are fully dark at night
+
+/** Whether floor `r` (0 = top) of building `b` (an integer seed) is fully dark: decided per floor, so a whole floor is dark or none of it is. Pure hash. */
+export function floorIsDark(b: number, r: number): boolean {
+  let h = (b * 374761393 + r * 668265263 + 1274126177) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  h ^= h >>> 16
+  return (h >>> 0) / 4294967296 < FLOOR_DARK
+}
+/** The variant of the same kind that is never lit at night (highest lit threshold): used on dark floors. */
+export function darkVariant(vi: number): number {
+  if (vi < 12) return 11 // plain window
+  if (vi < 16) return 15 // window + AC box (V_AC + 3)
+  if (vi < 20) return 19 // window + balcony (V_BALC + 3)
+  if (vi < 22) return 21 // fire escape bay (V_FIRE + 1)
+  if (vi < 24) return vi // shop: ground floor, unchanged
+  if (vi < 27) return 26 // left edge (V_L + 2)
+  if (vi < 30) return 29 // right edge (V_R + 2)
+  return 32 // top edge (V_T + 2)
+}
 const FACADE_FLOOR = [0.44, 0.41, 0.38] // luminance floors for the walls: day, dusk, night (the additive display needs bright colours, but day stays close to night)
 export const HAZE_COLOR: RGB = [0.72, 0.77, 0.85] // cool light grey-blue
 export const DAY_DESAT = 0.18 // by day colours lose this much saturation...
@@ -149,8 +171,8 @@ function makePalette(st: FacadeStyle, ft: FacadeTime, shade: number): Pal {
     frame: lift(mul(st.frame.map((x, k) => x * tint[k]), shade)),
     accent: lift(mul(st.accent.map((x, k) => x * tint[k]), shade)),
     accent2: lift(mul([1, 0.97, 0.92].map((x, k) => x * tint[k]), shade)),
-    glassTop: lift(mul(ft.glass.map((x) => x * 1.12 * gm), shade)),
-    glassBot: lift(mul(ft.glass.map((x) => x * 0.84 * gm), shade)),
+    glassTop: lift(mul(ft.glass.map((x) => x * 1.04 * gm), shade)),
+    glassBot: lift(mul(ft.glass.map((x) => x * 0.96 * gm), shade)),
     metal: lift(mul([0.5, 0.55, 0.62], shade)),
     acBody: lift(mul([0.9, 0.92, 0.93], shade)),
     slot: lift(mul([0.55, 0.58, 0.64], shade)),
@@ -281,6 +303,12 @@ function writeCell(d: Uint8Array, col: number, row: number): void {
       d[o + 3] = 255
     }
   }
+}
+
+/** The glass of a style at a time of day: [top, bottom] colours of a pane (0..1, before the editor tone). For checks. */
+export function facadeGlass(style: number, ft: FacadeTime): RGB[] {
+  const p = makePalette(STYLES[style], ft, 1)
+  return [p.glassTop, p.glassBot]
 }
 
 /** Final colour (0..255, with the editor tone) of a lit wall of a style: what the atlas shows. For checks. */

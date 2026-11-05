@@ -1,4 +1,4 @@
-// Day colours of the route lines and trails: amber, thicker, more opaque by day; the current colours at night (RouteDayChecks.ts, also run in Node).
+// Day colours of the route lines and trails: neon green, thicker, fully opaque with a slight glow by day; the current colours at night (RouteDayChecks.ts, also run in Node).
 // Plus a live read of the sky controller's day amount.
 import {Scenario} from "Leaf.lspkg/Scenarios/scenario/Scenario"
 import {Checks, getMain, waitReady} from "../SkyHangarTestKit"

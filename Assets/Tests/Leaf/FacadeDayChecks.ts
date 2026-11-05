@@ -1,6 +1,6 @@
 // Pure facade day / night checks (no Lens globals beyond the facade module's own imports): the same assertions run in the LEAF scenario SH_N_FacadeDay.
 // The night palette is the reference; the day must be the same hues, only slightly brighter and desaturated, hazier with distance, never more saturated.
-import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, facadeTimeFor, facadeWallColor, facadeBay, BAY_W, BAY_H} from "../../Scripts/SkyHangarFacade"
+import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, facadeTimeFor, facadeWallColor, facadeBay, facadeGlass, floorIsDark, darkVariant, FLOOR_DARK, VARIANTS, BAY_W, BAY_H} from "../../Scripts/SkyHangarFacade"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
@@ -66,6 +66,37 @@ export function runFacadeDayChecks(c: Check, print: (s: string) => void): void {
   c.check("by day the far ring is a little hazier than the near buildings (less saturated)", "inspection", STYLES.every((_, i) => hsv(dayFar[i])[1] < hsv(dayNear[i])[1]))
   const nightFar = STYLES.map((_, i) => facadeWallColor(i, facadeTimeFor(N, FAR_HAZE, 0)))
   c.check("at night there is no distance haze (far = near)", "inspection", STYLES.every((_, i) => nightFar[i].every((v, k) => v === night[i][k])))
+  // ---- clean, uniform windows: one glass colour, one warm light colour, lit windows on aligned floors ----
+  const sm01 = (a: number, b: number, x: number): number => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+  const warms = VARIANTS.map((v) => v.warm.map((x) => Math.round(x * 255)))
+  const wh = warms.map((w) => hsv(w)[0]), wl = warms.map((w) => lum(w))
+  c.check("every lit window is the same soft warm white-yellow (hue within 5 degrees, tone within 5%): no orange, pink, blue or white patches", "inspection",
+    Math.max(...wh) - Math.min(...wh) <= 5 && Math.max(...wh) >= 35 && Math.min(...wh) <= 55 && (Math.max(...wl) - Math.min(...wl)) / Math.max(...wl) <= 0.05, `hue ${Math.min(...wh).toFixed(0)}-${Math.max(...wh).toFixed(0)}, tone spread ${(((Math.max(...wl) - Math.min(...wl)) / Math.max(...wl)) * 100).toFixed(1)}%`)
+  const ftD = facadeTimeFor([1, 0, 0], 0, 0), ftU = facadeTimeFor([0, 1, 0], 0, 0), ftN = facadeTimeFor([0, 0, 1], 0, 0)
+  const gl = (ft: typeof ftD, si: number): number[][] => facadeGlass(si, ft).map((g) => g.map((v) => Math.round(v * 255)))
+  c.check("the glass is one blue family at every time of day (hue 200-250 degrees) for every style: no warm, orange or pink panes", "inspection", STYLES.every((_, si) => [ftD, ftU, ftN].every((ft) => gl(ft, si).every((g) => hsv(g)[0] >= 200 && hsv(g)[0] <= 250))))
+  c.check("within a pane (and so between panes) the glass tone varies by at most about 5%", "inspection", STYLES.every((_, si) => [ftD, ftU, ftN].every((ft) => { const g = gl(ft, si); return Math.abs(lum(g[0]) - lum(g[1])) / ((lum(g[0]) + lum(g[1])) / 2) <= 0.1 })))
+  const gD = gl(ftD, 0), gN = gl(ftN, 0)
+  c.check("day glass: a calm, slightly lighter, desaturated blue-grey (lighter and less saturated than at night, saturation <= 0.35)", "inspection", lum(gD[0]) > lum(gN[0]) && hsv(gD[0])[1] < hsv(gN[0])[1] && hsv(gD[0])[1] <= 0.35, `day ${gD[0].join(",")} (sat ${hsv(gD[0])[1].toFixed(2)}) night ${gN[0].join(",")}`)
+  c.check("night glass: deep blue, but not black (bright enough for the additive display)", "inspection", STYLES.every((_, si) => lum(gl(ftN, si)[0]) >= 0.3) && hsv(gN[0])[1] >= 0.4, `night ${gN[0].join(",")}`)
+  c.check("day: no lit windows at all", "inspection", ftD.frac === 0 && VARIANTS.every((v) => sm01(v.thr, v.thr + 0.1, ftD.frac) === 0))
+  // lit share at night: the builder picks plain windows 83%, window + AC 7%, window + balcony 10%; whole floors are dark on top
+  const meanLit = (lo: number, n: number): number => { let t = 0; for (let i = lo; i < lo + n; i++) t += sm01(VARIANTS[i].thr, VARIANTS[i].thr + 0.1, ftN.frac); return t / n }
+  let darkRows = 0, rowsTotal = 0
+  for (let b = 1; b <= 400; b++) for (let r = 0; r < 20; r++) { rowsTotal++; if (floorIsDark(b * 7919, r)) darkRows++ }
+  const darkShare = darkRows / rowsTotal
+  const share = (1 - darkShare) * (0.83 * meanLit(0, 12) + 0.07 * meanLit(12, 4) + 0.1 * meanLit(16, 4))
+  c.check("night: about 25-35% of the windows are lit", "inspection", share >= 0.25 && share <= 0.35, `${(share * 100).toFixed(1)}% (${(darkShare * 100).toFixed(0)}% of floors dark)`)
+  c.check("some floors are fully dark (about 12-25% of floors), decided per floor and per building", "inspection", darkShare >= 0.12 && darkShare <= 0.25 && floorIsDark(12345, 3) === floorIsDark(12345, 3) && FLOOR_DARK > 0.1, `${(darkShare * 100).toFixed(0)}%`)
+  c.check("a dark floor uses the same bay kind with a window that is never lit at night", "inspection", VARIANTS.slice(0, 33).every((v, vi) => { const d = darkVariant(vi); return v.kind === "shop" ? d === vi : VARIANTS[d].kind === v.kind && sm01(VARIANTS[d].thr, VARIANTS[d].thr + 0.1, ftN.frac) === 0 }))
+  // the lit windows sit on the floor grid: rows are floors (fixed bay height), columns are the bay grid (fixed bay width); only which ones are lit varies
+  c.check("lit windows follow the floors: every bay is one floor high and the same width, so lit windows form aligned rows and columns", "inspection", BAY_W === 20 && BAY_H === 24 && VARIANTS.length === 45)
+  // night paints: lit windows are one warm colour, unlit are blue glass: no other hue in the window area of a plain classic bay
+  const litBay = facadeBay(0, 0, ftN) // variant 0 has the lowest threshold: lit at night
+  const dark = facadeBay(0, 11, ftN) // variant 11 is never lit
+  const win = (a: Float32Array, x: number, y: number): number[] => [0, 1, 2].map((k) => Math.round(a[(y * BAY_W + x) * 3 + k] * 255))
+  const litC = win(litBay, 6, 7), darkC = win(dark, 6, 7)
+  c.check("a lit pane is the warm white-yellow and an unlit pane is blue glass", "inspection", hsv(litC)[0] >= 30 && hsv(litC)[0] <= 60 && hsv(darkC)[0] >= 200 && hsv(darkC)[0] <= 250, `lit ${litC.join(",")} unlit ${darkC.join(",")}`)
   // smooth with the time of day
   let smooth = true, mono = true
   const prev: number[][] = []
