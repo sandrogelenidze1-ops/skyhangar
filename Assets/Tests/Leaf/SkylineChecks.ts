@@ -1,5 +1,5 @@
 // Pure skyline checks (no Lens globals) so the same assertions run in the LEAF scenario SH_N_Skyline and in plain Node.
-import {COL_FRONT, COL_BACK, tone, skylineTowers, paintSkyline, stripGeometry, towerTotal, towerGrid, towerPrims, skylineLook, rowElevation, SKY_MAX_EL, SKY_FRONT_MAX_EL, TEX_W, TEX_H, STRIP_R, COL_PITCH, POLE_BASE_PX, POLE_BASE_CM, PX_PER_DEG} from "../../Scripts/SkyHangarSkylineSpec"
+import {COL_FRONT, COL_BACK, tone, skylineTowers, paintSkyline, stripGeometry, towerTotal, towerGrid, towerPrims, skylineLook, rowElevation, elevationRow, SKY_MAX_EL, SKY_FRONT_MAX_EL, TEX_W, TEX_H, STRIP_R, COL_PITCH, POLE_BASE_PX, POLE_BASE_CM, PX_PER_DEG} from "../../Scripts/SkyHangarSkylineSpec"
 
 export interface Check {
   check(name: string, input: "inspection", pass: boolean, detail?: string): boolean
@@ -12,10 +12,22 @@ const lum = (r: number, g: number, b: number): number => 0.3 * r + 0.4 * g + 0.3
 export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   const towers = skylineTowers()
   const front = towers.filter((t) => !t.back), back = towers.filter((t) => t.back)
-  c.check("8-12 towers in total (twin towers count as one) with a lower back row", "inspection", towers.length >= 8 && towers.length <= 12 && back.length >= 2 && back.length <= 4, `${front.length} front + ${back.length} back`)
+  c.check("covers the full 360 degrees: 16 front towers (3-5 per side) plus a lower hazier back row", "inspection", front.length >= 12 && front.length <= 20 && back.length >= 6 && back.length <= 14, `${front.length} front + ${back.length} back`)
+  const quad = (t: {az: number}): number => Math.floor(((((t.az + 45) % 360) + 360) % 360) / 90) // 0 = ahead, 1 = right, 2 = behind, 3 = left
+  const perSide = [0, 1, 2, 3].map((q) => front.filter((t) => quad(t) === q).length)
+  c.check("3-5 front towers on every side (ahead, right, behind, left)", "inspection", perSide.every((n) => n >= 3 && n <= 5), perSide.join(" / "))
+  const everyAz = towers.map((t) => ((t.az % 360) + 360) % 360).sort((a, b) => a - b)
+  let maxGap = 0
+  for (let i = 0; i < everyAz.length; i++) maxGap = Math.max(maxGap, i === everyAz.length - 1 ? everyAz[0] + 360 - everyAz[i] : everyAz[i + 1] - everyAz[i])
+  c.check("no direction is empty: some tower at least every 45 degrees", "inspection", maxGap <= 45, `largest gap ${maxGap.toFixed(0)} deg`)
+  const fs = front.map((t) => ({a: ((t.az % 360) + 360) % 360, w: t.w})).sort((a, b) => a.a - b.a)
+  let lowGaps = 0
+  for (let i = 0; i < fs.length; i++) { const n = fs[(i + 1) % fs.length]; const gap = ((n.a - fs[i].a + 360) % 360) - (n.w + fs[i].w) / 2; if (gap >= 20) lowGaps++ }
+  c.check("a few low gaps so it is not a wall (>= 2 gaps of 20+ degrees between front towers)", "inspection", lowGaps >= 2, `${lowGaps} gaps`)
   const forms = new Set(front.map((t) => t.form))
-  const want = ["wedding", "pyramid", "slant", "twin", "round", "notch", "spire", "podium", "lean"]
-  c.check("nine distinct forms: stepped, pyramid crown, slanted roof, twin + bridge, rounded top, notched, spire, podium + slim tower, leaning", "inspection", want.every((f) => (forms as Set<string>).has(f)), [...forms].join(","))
+  const want = ["wedding", "pyramid", "slant", "twin", "round", "notch", "spire", "podium"]
+  c.check("the same eight forms: stepped, pyramid crown, slanted roof, twin + bridge, rounded top, notched, spire, podium + slim tower", "inspection", want.every((f) => (forms as Set<string>).has(f)), [...forms].join(","))
+  c.check("the tilted / leaning tower is gone", "inspection", !(forms as Set<string>).has("lean") && !towers.some((t) => (t.form as string) === "lean"))
   c.check("not plain rectangles: no front tower is a box", "inspection", front.filter((t) => t.form === "box").length === 0)
   const painted = paintSkyline(towers)
   c.check("deterministic (two paints identical)", "inspection", (() => {
@@ -27,7 +39,8 @@ export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   // poles: very thin, tapering to a point, tiny red beacon on top
   const poles = towers.filter((t) => t.pole > 0)
   const nBeacons = towers.filter((t) => t.beacon).length
-  c.check("2-3 red beacons, each on a pole", "inspection", nBeacons >= 2 && nBeacons <= 3 && towers.filter((t) => t.beacon).every((t) => t.pole > 0), `${nBeacons}`)
+  const beaconSides = [0, 1, 2, 3].map((q) => towers.filter((t) => t.beacon && quad(t) === q).length)
+  c.check("a few red beacons, each on a pole: 1-2 on every side", "inspection", beaconSides.every((n) => n >= 1 && n <= 2) && towers.filter((t) => t.beacon).every((t) => t.pole > 0), `${nBeacons} (${beaconSides.join(" / ")})`)
   c.check(`poles are very thin: ${POLE_BASE_PX} texels at the foot (~${POLE_BASE_CM.toFixed(0)} cm), tapering to a point`, "inspection", POLE_BASE_PX <= 2.5 && poles.every((t) => {
     const pr = towerPrims(t).filter((p) => p.pole)[0].poly as number[]
     return pr.length === 6 && Math.abs(pr[2] - pr[0]) <= 2.5 && pr[4] >= pr[0] && pr[4] <= pr[2] // 3 points: base <= 2.5 texels wide, apex above it
@@ -46,7 +59,7 @@ export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   c.check("beacons are tiny (3 x 3 texels), one per beacon pole", "inspection", painted.beaconPx.length === nBeacons)
   const tallest = Math.max(...towers.map(towerTotal))
   c.check(`tallest point (pole tip included) <= ${SKY_MAX_EL} degrees, most of the sky stays clear`, "inspection", tallest <= SKY_MAX_EL, `${tallest.toFixed(2)}`)
-  const ahead = front.filter((t) => Math.abs((((t.az + 180) % 360) + 360) % 360 - 180) - t.w / 2 < 30)
+  const ahead = towers.filter((t) => Math.abs((((t.az + 180) % 360) + 360) % 360 - 180) - t.w / 2 < 30)
   c.check(`roofs in the central 60 degrees ahead stay <= ${SKY_FRONT_MAX_EL} degrees`, "inspection", ahead.every((t) => t.top <= SKY_FRONT_MAX_EL + 1e-6), `${ahead.length} ahead`)
   c.check("back row is lower than the tallest front towers", "inspection", Math.max(...back.map((t) => t.top)) < Math.max(...front.map((t) => t.top)))
 
@@ -65,15 +78,43 @@ export function runSkylineChecks(c: Check, print: (s: string) => void): void {
     for (const r of v.rs) if ((r - g.r0) % g.pitch !== 0) rowsOk = false // regular floor spacing
   }
   const pitchOk = towers.every((t) => towerGrid(t).pitch === (t.back ? 8 : 4))
-  c.check("lights sit in horizontal floor rows at a regular spacing (every floor in front, every second floor on the far row)", "inspection", rowsOk && pitchOk && perTower.size >= 8, `${perTower.size} towers lit`)
+  c.check("lights sit in horizontal floor rows at a regular spacing (every floor in front, every second floor on the far row)", "inspection", rowsOk && pitchOk && perTower.size >= 20, `${perTower.size} towers lit`)
   c.check("window columns are aligned between floors (fixed 4-texel pitch, 2-texel dashes)", "inspection", aligned)
   const frac = painted.lit / Math.max(1, painted.windows)
   c.check("about 30-50% of the windows are lit", "inspection", frac >= 0.28 && frac <= 0.52, `${(frac * 100).toFixed(1)}% (${painted.lit} of ${painted.windows})`)
   c.check("some floors are entirely dark", "inspection", painted.darkFloors >= 5, `${painted.darkFloors} dark floors`)
-  c.check("a few towers have a lit office band", "inspection", towers.filter((t) => t.band).length >= 2 && towers.filter((t) => t.band).length <= 4)
+  c.check("a few towers have a lit office band", "inspection", towers.filter((t) => t.band).length >= 2 && towers.filter((t) => t.band).length <= 6)
   let maxA = 0
   for (let i = 0; i < painted.litPx.length; i += 3) maxA = Math.max(maxA, painted.lights[(painted.litPx[i + 2] * TEX_W + painted.litPx[i + 1]) * 4 + 3])
   c.check("lights are tiny and dim (2 x 1 texel dashes, alpha <= 0.85)", "inspection", maxA > 0 && maxA <= 217, `max alpha ${maxA}`)
+
+  // one continuous silhouette: no hairline gaps or seams (an uncovered run of 1-2 texels with covered texels on both sides), vertically or horizontally
+  const rLow = Math.max(0, Math.ceil(elevationRow(1.0)))
+  const cov = (x: number, r: number): boolean => painted.sil[(r * TEX_W + x) * 4 + 3] >= 128
+  let seams = 0, seamAt = ""
+  for (let x = 0; x < TEX_W; x++) {
+    let r = rLow
+    while (r < TEX_H) {
+      if (cov(x, r)) { r++; continue }
+      let e = r
+      while (e < TEX_H && !cov(x, e)) e++
+      if (r > rLow && e < TEX_H && e - r <= 2 && cov(x, r - 1)) { seams++; if (!seamAt) seamAt = `x${x} r${r}` }
+      r = e
+    }
+  }
+  for (let r = rLow; r < TEX_H; r++) {
+    let x = 0
+    while (x < TEX_W) {
+      if (cov(x, r)) { x++; continue }
+      let e = x
+      while (e < TEX_W && !cov(e, r)) e++
+      if (x > 0 && e < TEX_W && e - x <= 2 && cov(x - 1, r)) { seams++; if (!seamAt) seamAt = `x${x} r${r}` }
+      x = e
+    }
+  }
+  c.check("every tower is one continuous silhouette: no see-through seams or hairline gaps (stepped, rounded, pyramid, notched, twin...)", "inspection", seams === 0, `${seams} seams${seamAt ? " first at " + seamAt : ""}`)
+  const px0 = towers.map((t) => towerPrims(t).reduce((m, p) => Math.min(m, p.x0), 1e9)), px1 = towers.map((t) => towerPrims(t).reduce((m, p) => Math.max(m, p.x1), -1e9))
+  c.check("no tower straddles the texture seam at azimuth 0", "inspection", px0.every((v) => v > 4) && px1.every((v) => v < TEX_W - 4))
 
   // geometry: low poly, far away, inside the dome
   const g = stripGeometry()

@@ -563,6 +563,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     }
     if (!this.built && this.sky.isBuilt()) this.build()
     if (!this.built) return
+    if (this.skyline) this.skyline.follow(this.cameraObject.getTransform().getWorldPosition()) // the skyline stays centred on the viewer (horizontally)
     const now = getTime()
     if (now - this.lastSlow < 0.1) return // everything below runs at most 10 times a second
     this.lastSlow = now

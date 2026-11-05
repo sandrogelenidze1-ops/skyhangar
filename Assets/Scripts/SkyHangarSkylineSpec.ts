@@ -33,7 +33,7 @@ export function tone(c: number[]): number[] {
   return [f(c[0]), f(c[1]), f(c[2])]
 }
 
-export type Form = "box" | "wedding" | "pyramid" | "slant" | "twin" | "round" | "notch" | "spire" | "podium" | "lean"
+export type Form = "box" | "wedding" | "pyramid" | "slant" | "twin" | "round" | "notch" | "spire" | "podium"
 
 export interface Tower {
   az: number // centre, degrees (0 = straight ahead, -Z; growing toward +X, same convention as the city)
@@ -46,15 +46,23 @@ export interface Tower {
   band: boolean // a lit "office band" of three fully lit floors
 }
 
-// Front row: nine distinct forms (twin towers count as one form). Back row: three lower, hazier plain towers.
+// Front row: 16 towers, four per side (front, right, back, left), the eight forms used twice with different sizes; a few wide low gaps between them.
+// Back row: 12 lower, hazier plain towers. Nothing straddles azimuth 0 (the texture seam).
 // az, width, top, form, pole, beacon, band
 const FRONT: [number, number, number, Form, number, number, number][] = [
-  [-43, 6.2, 3.5, "podium", 0, 0, 0], [-35, 3.0, 3.7, "lean", 0, 0, 0], // ahead-left, low (nothing in the central 60 degrees)
-  [48, 3.4, 4.4, "notch", 0, 0, 0], [54, 4.4, 6.0, "wedding", 0.9, 1, 1], [60.5, 3.2, 4.7, "pyramid", 0.55, 1, 0], // tall cluster to the right
-  [150, 3.8, 4.0, "slant", 0, 0, 0], [156, 2.6, 5.8, "spire", 1.3, 1, 1], // behind-right
-  [232, 5.4, 4.6, "twin", 0, 0, 1], [239, 3.0, 3.9, "round", 0, 0, 0] // behind-left
+  // front side: the central 60 degrees ahead stay low
+  [-41, 6.0, 3.5, "podium", 0, 0, 0], [-22, 3.0, 3.2, "round", 0, 0, 0], [4, 3.2, 3.6, "notch", 0, 0, 0], [38, 4.4, 6.0, "wedding", 0.9, 1, 1],
+  // right side
+  [58, 3.2, 5.0, "pyramid", 0.55, 1, 0], [80, 3.8, 4.2, "slant", 0, 0, 0], [104, 2.6, 5.8, "spire", 1.3, 1, 1], [128, 5.2, 4.4, "twin", 0, 0, 1],
+  // back side
+  [146, 3.4, 4.3, "round", 0, 0, 0], [168, 4.2, 5.4, "wedding", 0.8, 1, 0], [192, 6.0, 3.8, "podium", 0, 0, 1], [214, 3.4, 4.8, "notch", 0, 0, 0],
+  // left side
+  [236, 2.8, 5.2, "spire", 1.1, 1, 1], [256, 3.4, 4.4, "pyramid", 0, 0, 0], [281, 5.4, 4.6, "twin", 0, 0, 0], [302, 3.6, 3.8, "slant", 0, 0, 0]
 ]
-const BACK: [number, number, number][] = [[-39, 4, 2.4], [44, 3.6, 3.4], [153, 3.4, 3.2]]
+const BACK: [number, number, number][] = [
+  [-30, 3.0, 2.0], [18, 3.4, 2.4], [48, 3.6, 3.0], [92, 3.2, 2.8], [116, 3.6, 2.6], [157, 3.4, 3.0],
+  [181, 3.2, 2.2], [222, 3.6, 2.8], [246, 3.4, 2.5], [268, 3.6, 3.2], [292, 3.4, 2.2], [330, 3.6, 2.6]
+]
 
 export function skylineTowers(): Tower[] {
   const out: Tower[] = []
@@ -115,7 +123,7 @@ export function towerPrims(t: Tower): Prim[] {
     case "pyramid": { // tapered crown
       const tb = T - 0.75
       out.push(rect(-w / 2, w / 2, B, tb))
-      out.push(polyPrim([X(-w * 0.45), Y(tb - 0.02), X(w * 0.45), Y(tb - 0.02), X(0), Y(T)]))
+      out.push(polyPrim([X(-w * 0.45), Y(tb - 0.15), X(w * 0.45), Y(tb - 0.15), X(0), Y(T)])) // the crown starts 0.15 degrees (about 3 rows) inside the body: no seam
       break
     }
     case "slant": // angled roof
@@ -125,19 +133,20 @@ export function towerPrims(t: Tower): Prim[] {
       const wt = w * 0.36
       out.push(rect(-w / 2, -w / 2 + wt, B, T))
       out.push(rect(w / 2 - wt, w / 2, B, T - 0.5))
-      out.push(rect(-w / 2 + wt - 0.02, w / 2 - wt + 0.02, T * 0.5, T * 0.5 + 0.32))
+      out.push(rect(-w / 2 + wt - 0.3, w / 2 - wt + 0.3, T * 0.5, T * 0.5 + 0.32)) // the bridge reaches 0.3 degrees (3 texels) into both towers
       break
     }
     case "round": { // cylindrical, rounded top
       const tb = T - 0.55
+      const cy = Y(tb - 0.2) // the dome's centre sits 0.2 degrees (about 4 rows) inside the body, so the two overlap fully: no seam
       out.push(rect(-w / 2, w / 2, B, tb))
-      out.push({ell: [X(0), Y(tb), (w / 2) * PX_PER_DEG, Y(tb + 0.6) - Y(tb)], x0: X(-w / 2), x1: X(w / 2), y0: Y(tb), y1: Y(tb + 0.6)})
+      out.push({ell: [X(0), cy, (w / 2) * PX_PER_DEG, Y(tb + 0.6) - cy], x0: X(-w / 2), x1: X(w / 2), y0: cy, y1: Y(tb + 0.6)})
       break
     }
     case "notch": // split top with a V notch
       out.push(rect(-w / 2, -w * 0.14, B, T))
       out.push(rect(w * 0.14, w / 2, B, T - 0.25))
-      out.push(rect(-w * 0.14 - 0.02, w * 0.14 + 0.02, B, T - 1.0))
+      out.push(rect(-w * 0.14 - 0.3, w * 0.14 + 0.3, B, T - 1.0)) // overlaps both prongs by 0.3 degrees
       break
     case "spire": // slim tower with a small crown block and a tall pole
       out.push(rect(-w / 2, w / 2, B, T))
@@ -147,20 +156,10 @@ export function towerPrims(t: Tower): Prim[] {
       out.push(rect(-w / 2, w / 2, B, T * 0.42))
       out.push(rect(-w * 0.17, w * 0.17, B, T))
       break
-    case "lean": { // curved, leaning profile, built from overlapping convex slices
-      const N = 10, lean = w * 0.5
-      for (let i = 0; i < N; i++) {
-        const s0 = i / N, s1 = Math.min(1, (i + 1) / N + 0.02)
-        const seg = (s: number): number[] => [lean * s * s - (w / 2) * (1 - 0.3 * s), lean * s * s + (w / 2) * (1 - 0.3 * s), B + (T - B) * s]
-        const a = seg(s0), b = seg(s1)
-        out.push(polyPrim([X(a[0]), Y(a[2]), X(a[1]), Y(a[2]), X(b[1]), Y(b[2]), X(b[0]), Y(b[2])]))
-      }
-      break
-    }
   }
   if (t.pole > 0) {
     const pb = poleBaseEl(t)
-    out.push(polyPrim([cx - POLE_BASE_PX / 2, Y(pb - 0.04), cx + POLE_BASE_PX / 2, Y(pb - 0.04), cx, Y(pb + t.pole)], true))
+    out.push(polyPrim([cx - POLE_BASE_PX / 2, Y(pb - 0.15), cx + POLE_BASE_PX / 2, Y(pb - 0.15), cx, Y(pb + t.pole)], true))
   }
   return out
 }

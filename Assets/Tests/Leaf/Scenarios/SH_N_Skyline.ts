@@ -34,6 +34,17 @@ export class SH_N_Skyline extends Scenario {
     const sa = (s.getChild(0).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass.baseColor.a
     print(`[SH-TEST] skyline now: lights alpha ${la.toFixed(2)}, silhouette alpha ${sa.toFixed(2)}`)
     c.check("lights alpha and silhouette alpha are valid for the current time of day (lights 0..1, silhouette 0.28..1)", "inspection", la >= 0 && la <= 1 && sa >= 0.27 && sa <= 1.01, `${la.toFixed(2)} / ${sa.toFixed(2)}`)
+    // never culled, and always centred on the viewer (horizontally), so it is the same distance away from every side
+    for (let i = 0; i < s.getChildrenCount(); i++) {
+      const p2 = (s.getChild(i).getComponent("Component.RenderMeshVisual") as RenderMeshVisual).mainMaterial.mainPass
+      c.check(`${s.getChild(i).name}: frustum culling disabled (huge user AABB)`, "inspection", p2.frustumCullMode === FrustumCullMode.UserDefinedAABB && p2.frustumCullMax.x >= 20000 && p2.frustumCullMin.x <= -20000)
+    }
+    const camObj = findSceneObjectByName("Camera Object")
+    if (camObj) {
+      await waitUntil(() => { const a = camObj.getTransform().getWorldPosition(), b = s.getTransform().getWorldPosition(); return Math.hypot(a.x - b.x, a.z - b.z) < 2 }, 3000)
+      const a = camObj.getTransform().getWorldPosition(), b = s.getTransform().getWorldPosition()
+      c.check("the skyline is centred on the camera's horizontal position", "inspection", Math.hypot(a.x - b.x, a.z - b.z) < 2, `camera ${a.x.toFixed(0)}, ${a.z.toFixed(0)} vs skyline ${b.x.toFixed(0)}, ${b.z.toFixed(0)}`)
+    }
     c.check("no scripts on the Skyline root", "inspection", s.getComponents("Component.ScriptComponent").length === 0)
     c.finish()
   }
