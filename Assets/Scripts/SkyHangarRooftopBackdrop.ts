@@ -14,6 +14,7 @@
 import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHangarUtil"
 import {MeshBatch} from "./SkyHangarBatch"
+import {SkyHangarSkyline} from "./SkyHangarSkyline"
 import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
 const DEG = Math.PI / 180
@@ -79,6 +80,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private slabMat!: Material
   private lampBulbMat!: Material
   private beaconMat!: Material
+  private skyline: SkyHangarSkyline | null = null // the distant skyline beyond the far ring (two merged meshes)
   private atlases: FacadeAtlas[] = []
   private ft: FacadeTime | null = null
   private flickerCursor = 0
@@ -197,6 +199,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       bb.box(Math.sin(t.a) * (t.d - 150), t.top + 24, -Math.cos(t.a) * (t.d - 150), 40, 40, 40, 0, [0, 0, 1, 1])
     }
     bb.build(city, "Beacons", this.beaconMat, ORDER_BEACON)
+    this.skyline = new SkyHangarSkyline(city, this.beaconMat) // distant skyline, well behind ring C, below the plane / marker area
 
     this.buildRoof(kit, floorY, cam)
     this.built = true
@@ -471,6 +474,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     const w = timeWeights(t)
     this.light = smoothstep(0.3, 0.85, t)
     this.beaconLight = smoothstep(0.25, 0.7, t)
+    if (this.skyline) this.skyline.setTimeOfDay(w)
     const horizon = mix3(HORIZON, w)
     const big = largeSurfaceFloor(w) // Day 0.65, Dusk 0.55, Night 0.45 for large flat surfaces
     // ambient colour taken from the sky: a gentle pull toward the horizon colour on top of the warm / cool tint
