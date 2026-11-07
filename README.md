@@ -83,7 +83,7 @@ icons are Google Material Symbols.
 - World map land outlines: Natural Earth 110m land (naturalearthdata.com), public domain, simplified for this Lens.
 - Map data © OpenStreetMap contributors (ODbL) — helicopter route maps (`Assets/Data/heli_basemap.json`, simplified, bundled; openstreetmap.org/copyright).
 - Font: Plus Jakarta Sans by Tokotype (The Plus Jakarta Sans Project Authors), SIL Open Font License 1.1 (licence text in `licenses/PlusJakartaSans-OFL.txt`).
-- Built with Lens Studio, Spectacles Interaction Kit and Spectacles UI Kit.
+- Built with Lens Studio,CLAD, Spectacles Interaction Kit and Spectacles UI Kit.
 
 ## Disclosures
 
