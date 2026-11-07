@@ -6,6 +6,7 @@
 2. Open `specs lens.esproj` in this folder.
 3. Click **Preview**. If the preview panel shows a red "Spectacles Interaction Kit" warning, open the Preview panel's settings and set **Simulation Mode** (or **Device Type Override**) to **Spectacles**, then re-run Preview.
 4. If the preview feels slow, shrink the Preview panel and close the Inspector/Logger tabs — a huge preview panel costs frames.
+5.Turn off tint background for better experience from preview settings>SPECS>Tint background
 
 
 Look up at the sky, tap a plane for its flight card, pinch-hold-drag it down into your hand as a
