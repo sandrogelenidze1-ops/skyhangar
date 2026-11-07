@@ -55,6 +55,20 @@ export function runFacadeDayChecks(c: Check, print: (s: string) => void): void {
   const ap = {distinct: looks.size, allBright: minL >= 0.3, minLum: minL, litAligned: aligned}
   c.check("the modern facades paint continuous ribbons / grids / panes / fins: each differs from the classic window and from each other", "inspection", ap.distinct >= 5 && ap.allBright, `${ap.distinct} distinct bay looks, min luminance ${ap.minLum.toFixed(2)}`)
   c.check("lit-window patterns stay aligned to floors: every modern bay's lit pixels sit inside the floor's glass rows (never on the slab edge)", "inspection", ap.litAligned)
+  // ---- modern facade architecture: opaque spandrel, thin mullions, reflection gradient, darker corner / roofline frame ----
+  const px = (a: Float32Array, x: number, y: number): number[] => [0, 1, 2].map((k) => a[(y * BAY_W + x) * 3 + k])
+  const lf = (p: number[]): number => 0.3 * p[0] + 0.4 * p[1] + 0.3 * p[2] // luminance of a 0..1 pixel
+  const dif = (p: number[], q: number[]): number => Math.abs(lf(p) - lf(q))
+  const ribbon = names.indexOf("ribbon-white"), curtain = names.indexOf("curtain-glass"), fins = names.indexOf("fins-concrete")
+  const rb = facadeBay(ribbon, 3, nightFt), cb = facadeBay(curtain, 3, nightFt)
+  c.check("ribbon / curtain: an opaque spandrel panel (not blue glass) sits under the glass band, at the same tone across the bay", "inspection",
+    dif(px(rb, 3, 18), px(rb, 15, 18)) < 0.01 && dif(px(rb, 3, 18), px(rb, 3, 8)) > 0.02 && dif(px(cb, 3, 18), px(cb, 3, 5)) > 0.02, "")
+  c.check("thin mullions: a 1 px line between panes whose tone differs from the glass by < 25% (calm at distance)", "inspection", dif(px(cb, 10, 4), px(cb, 15, 4)) > 0.005 && dif(px(cb, 10, 4), px(cb, 15, 4)) / lf(px(cb, 15, 4)) < 0.3, "")
+  c.check("glass reflection gradient: lighter at the top of a pane than at the bottom", "inspection", lf(px(cb, 5, 2)) > lf(px(cb, 5, 15)), "")
+  const edgeL = facadeBay(curtain, 24, nightFt), plain = facadeBay(curtain, 3, nightFt)
+  c.check("corner bays have a slightly darker frame than the middle bays (and the roofline row too), still bright enough", "inspection",
+    lf(px(edgeL, 0, 5)) < lf(px(plain, 0, 0)) - 0.01 && lf(px(facadeBay(curtain, 30, nightFt), 5, 1)) < lf(px(plain, 5, 0)) - 0.01 && lf(px(edgeL, 0, 5)) >= 0.3, "")
+  c.check("fins facade: thin vertical fins with glass between them", "inspection", dif(px(facadeBay(fins, 3, nightFt), 0, 5), px(facadeBay(fins, 3, nightFt), 4, 5)) > 0.02, "")
   // day = the same hues
   c.check("day keeps the night hues (within 5 degrees near, 25 degrees at the far haze)", "inspection", STYLES.every((_, i) => hueDiff(hsv(night[i])[0], hsv(dayNear[i])[0]) <= 5 && hueDiff(hsv(night[i])[0], hsv(dayFar[i])[0]) <= 25), names.map((n, i) => n + " " + hsv(night[i])[0].toFixed(0) + "/" + hsv(dayNear[i])[0].toFixed(0) + "/" + hsv(dayFar[i])[0].toFixed(0)).join(", "))
   // never more saturated by day

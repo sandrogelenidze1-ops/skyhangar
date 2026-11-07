@@ -20,7 +20,7 @@ export class SkyHangarSkyline {
   private nightMat: Material
   private dayMat: Material
   private lightMat: Material
-  private baseY = 0 // world height of the skyline's centre (kept: only the horizontal position follows the camera)
+  private baseY = 0 // world height of the skyline's centre (set by the rooftop during its settle window, then fixed: only the horizontal position follows the camera)
   private lastX = 1e9
   private lastZ = 1e9
   triangles = 0
@@ -79,6 +79,13 @@ export class SkyHangarSkyline {
    * Keep the skyline centred on the camera's horizontal position, in world orientation: its distance never changes, so it can't get closer, further or
    * out of range, and it shows on every side. One transform write, and only when the camera has moved at least 0.5 cm.
    */
+  /** Re-anchor the skyline's world height (during the rooftop's settle window); forces the next follow() to write. */
+  setBaseY(y: number): void {
+    if (y === this.baseY) return
+    this.baseY = y
+    this.lastX = 1e9
+  }
+
   follow(cam: vec3): void {
     if (Math.abs(cam.x - this.lastX) < 0.5 && Math.abs(cam.z - this.lastZ) < 0.5) return
     this.lastX = cam.x

@@ -60,6 +60,7 @@ export class SkyHangarEdgeArrows extends BaseScriptComponent {
   private arrows: Arrow[] = []
   private visibleCount = 0
   private active = false
+  private skipN = 0
   private nearest: SkyObjectInfo | null = null
   private nearestLabelPos = vec3.zero()
   private enabledByMode = true
@@ -137,6 +138,8 @@ export class SkyHangarEdgeArrows extends BaseScriptComponent {
   private update(): void {
     if (!this.sky.isBuilt()) return
     if (!this.root) this.build()
+    // While something is in view (no arrows shown) the in-view test only needs to run about 15 times a second; arrows themselves update every frame.
+    if (!this.active && (!this.enabledByMode || (++this.skipN & 3) !== 0)) return // (also nothing to do while suppressed and already hidden)
     const ct = this.cameraObject.getTransform()
     const camPos = ct.getWorldPosition()
     const camRot = ct.getWorldRotation()

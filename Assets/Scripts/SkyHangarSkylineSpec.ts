@@ -25,7 +25,7 @@ export const COL_HAZE: number[] = [0.42, 0.4, 0.82] // the bottom fades toward t
 /** The DAY silhouette: a soft, hazy, desaturated blue-grey a few steps darker than the daytime horizon sky, fading into the horizon haze toward the bottom.
  * Authored as final texel colours (what the preview shows is about 80 + 175 c, see DAY_SKY_SHOWN). The sky at the horizon in the day preview is about (150, 210, 255). */
 export const DAY_SKY_SHOWN: number[] = [150, 210, 255]
-export const DAY_TOP_SHOWN: number[] = [136, 176, 212] // the towers' upper part by day (about 15% darker than the sky, less saturated)
+export const DAY_TOP_SHOWN: number[] = [98, 127, 153] // the towers' upper part by day: a flat, muted blue-grey about 28% darker than before (~60% of the sky's brightness), still well above black
 const dayC = (v: number[]): number[] => v.map((x) => (x - 80) / 175)
 export const COL_DAY_TOP: number[] = dayC(DAY_TOP_SHOWN)
 export const COL_DAY_SKY: number[] = dayC(DAY_SKY_SHOWN)
@@ -239,8 +239,19 @@ export function paintSkyline(towers: Tower[]): Painted {
     const el = rowElevation(r)
     rowFade.push(smooth(-1.9, 1.2, el)) // soft gradient into the horizon haze toward the bottom
     rowHaze.push((1 - smooth(-1.4, 2.4, el)) * 0.6)
-    rowFadeDay.push(smooth(-1.9, 1.6, el) * 0.95) // by day the fade is longer and softer: the towers dissolve into the horizon haze
-    rowHazeDay.push((1 - smooth(-1.2, 3.4, el)) * 0.85)
+    rowFadeDay.push(smooth(-1.5, 1.0, el)) // by day the towers stay solid (opaque silhouettes), only the very bottom dissolves into the horizon
+    rowHazeDay.push((1 - smooth(-1.2, 3.4, el)) * 0.4) // little haze lightening: flat, not washed out
+  }
+  // per-row colours (they depend on the row only): front / back silhouette colour, and the day front / back colour; the per-pixel work is then just a blend
+  const rowF = new Float64Array(TEX_H * 3), rowB = new Float64Array(TEX_H * 3), rowDF = new Float64Array(TEX_H * 3), rowDB = new Float64Array(TEX_H * 3)
+  for (let r = 0; r < TEX_H; r++) {
+    const hz = rowHaze[r], hd = rowHazeDay[r]
+    for (let q = 0; q < 3; q++) {
+      rowF[r * 3 + q] = lerp(TF[q], TH[q], hz)
+      rowB[r * 3 + q] = lerp(TB[q], TH[q], hz)
+      rowDF[r * 3 + q] = lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], hd)
+      rowDB[r * 3 + q] = lerp(lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], 0.12), COL_DAY_SKY[q], hd)
+    }
   }
   for (let x = 0; x < TEX_W; x++) {
     covF.fill(0); covB.fill(0); ownF.fill(0); ownB.fill(0)
@@ -263,20 +274,15 @@ export function paintSkyline(towers: Tower[]): Painted {
     for (let r = 0; r < TEX_H; r++) {
       const cf = covF[r], cb = covB[r]
       if (cf === 0 && cb === 0) continue
-      const hz = rowHaze[r]
       const a = cf + cb * (1 - cf)
       const k = cf / a
-      const c = [0, 1, 2].map((q) => k * lerp(TF[q], TH[q], hz) + (1 - k) * lerp(TB[q], TH[q], hz))
+      const k1 = 1 - k
+      const r3 = r * 3
       const o = (r * TEX_W + x) * 4
-      sil[o] = Math.round(255 * clamp01(c[0])); sil[o + 1] = Math.round(255 * clamp01(c[1])); sil[o + 2] = Math.round(255 * clamp01(c[2]))
+      sil[o] = Math.round(255 * clamp01(k * rowF[r3] + k1 * rowB[r3])); sil[o + 1] = Math.round(255 * clamp01(k * rowF[r3 + 1] + k1 * rowB[r3 + 1])); sil[o + 2] = Math.round(255 * clamp01(k * rowF[r3 + 2] + k1 * rowB[r3 + 2]))
       sil[o + 3] = Math.round(255 * clamp01(a * rowFade[r]))
       // day silhouette: the back row sits closer to the sky colour (more haze), the bottom fades into the horizon
-      const hd = rowHazeDay[r]
-      for (let q = 0; q < 3; q++) {
-        const front = lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], hd)
-        const backc = lerp(lerp(COL_DAY_TOP[q], COL_DAY_SKY[q], 0.4), COL_DAY_SKY[q], hd)
-        day[o + q] = Math.round(255 * clamp01(k * front + (1 - k) * backc))
-      }
+      day[o] = Math.round(255 * clamp01(k * rowDF[r3] + k1 * rowDB[r3])); day[o + 1] = Math.round(255 * clamp01(k * rowDF[r3 + 1] + k1 * rowDB[r3 + 1])); day[o + 2] = Math.round(255 * clamp01(k * rowDF[r3 + 2] + k1 * rowDB[r3 + 2]))
       day[o + 3] = Math.round(255 * clamp01(a * rowFadeDay[r]))
       owner[x * TEX_H + r] = ownF[r] || (cf < 0.5 ? ownB[r] : 0)
     }
@@ -339,7 +345,7 @@ export function paintSkyline(towers: Tower[]): Painted {
  */
 export function skylineLook(w: number[], light: number): {nightAlpha: number; dayAlpha: number; nightTint: number[]; lightAlpha: number} {
   const nightAlpha = 0.85 * w[1] + 1.0 * w[2]
-  const dayAlpha = 0.95 * w[0]
+  const dayAlpha = 1.0 * w[0]
   const dusk = [1.0, 0.97, 1.0], night = [0.92, 0.94, 1.0]
   return {nightAlpha, dayAlpha, nightTint: [0, 1, 2].map((k) => dusk[k] * w[1] + night[k] * w[2] + 1.0 * w[0]), lightAlpha: clamp01(light)}
 }

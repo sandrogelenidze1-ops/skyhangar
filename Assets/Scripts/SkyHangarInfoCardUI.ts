@@ -108,6 +108,8 @@ const withCommas = (n: number) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?
 
 export type CardTab = "info" | "route"
 
+const CARD_SCALE = 0.72 // the whole card (both tabs) is drawn 28% smaller, uniformly: same layout, same design
+
 @component
 export class SkyHangarInfoCardUI extends BaseScriptComponent {
   @ui.label('<span style="color: #60A5FA;">SkyHangarInfoCardUI – glass flight card</span>')
@@ -496,7 +498,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
    */
   private placeInFront(dt: number = 0): void {
     const d = this.placeDistanceCm
-    const cardH = Math.max(1, this.glass.size.y)
+    const cardH = Math.max(1, this.glass.size.y) * CARD_SCALE
     const half = (Math.atan2(cardH / 2, d) * 180) / Math.PI // half height as seen from the head, deg
     let want = this.aboveEyeDeg
     let fit = 1
@@ -519,7 +521,7 @@ export class SkyHangarInfoCardUI extends BaseScriptComponent {
   }
 
   private applyScale(s: number): void {
-    const f = s * this.fit
+    const f = s * this.fit * CARD_SCALE
     this.panelRoot.getTransform().setLocalScale(new vec3(f, f, f))
   }
 

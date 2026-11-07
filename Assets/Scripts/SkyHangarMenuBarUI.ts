@@ -19,6 +19,13 @@ const ICON_HANGAR = requireAsset("../Icons/warehouse.png") as Texture
 const ICON_ROUTES = requireAsset("../Icons/routes_128x128 2.png") as Texture
 
 const GLYPH_MIN_OPACITY = 0.9
+const MIN_DIST_CM = 70
+const MAX_DIST_CM = 120
+const HEAD_TAU_S = 0.15 // head-position low-pass time constant
+const MAX_AZ_DEG = 35 // how far the bar may lag sideways from the gaze centre
+const BAND_ABOVE_DEG = 4 // never higher on screen than idle minus this
+const BAND_BELOW_DEG = 12 // never lower than idle plus this
+const DIST_DEADZONE_CM = 10 // walking/leaning changes smaller than this don't move the bar
 
 @component
 export class SkyHangarMenuBarUI extends BaseScriptComponent {
@@ -80,6 +87,7 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   private mode = "sky"
   private placed = false
   private drifting = false
+  private headF = vec3.zero() // low-passed head position used by the follow
   private hovered = 0
   private brightness = 0
   private bright = false
@@ -100,6 +108,33 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     this.createEvent("UpdateEvent").bind(() => this.update())
   }
 
+  /** Follow distance, clamped to 70-120 cm whatever the scene value says. */
+  private get dist(): number { return Math.max(MIN_DIST_CM, Math.min(MAX_DIST_CM, this.distanceCm)) }
+  /** Head-space offset of the idle spot: the fixed angle (belowViewDeg) below the gaze centre, at the follow distance. */
+  private idealLocal(): vec3 {
+    const b = (this.belowViewDeg * Math.PI) / 180
+    return new vec3(0, -Math.sin(b) * this.dist, -Math.cos(b) * this.dist)
+  }
+  /**
+   * Hard limits in head space: angle below the gaze centre within [belowViewDeg - 4, belowViewDeg + 12] (never higher on screen
+   * than the idle spot minus 4 deg), horizontal offset from the gaze centre within +-35 deg, distance from the head 70-120 cm.
+   * Returns the same vec3 object when nothing needed correcting.
+   */
+  private limitToBand(pos: vec3, camPos: vec3, camRot: quat): vec3 {
+    const l = camRot.invert().multiplyVec3(pos.sub(camPos))
+    const r = Math.max(0.001, l.length)
+    const rad = Math.PI / 180
+    const az = Math.atan2(l.x, -l.z) / rad
+    const below = -Math.atan2(l.y, Math.hypot(l.x, l.z)) / rad
+    const rr = Math.max(MIN_DIST_CM, Math.min(MAX_DIST_CM, r))
+    const aa = Math.max(-MAX_AZ_DEG, Math.min(MAX_AZ_DEG, az))
+    const bb = Math.max(this.belowViewDeg - BAND_ABOVE_DEG, Math.min(this.belowViewDeg + BAND_BELOW_DEG, below))
+    if (rr === r && aa === az && bb === below) return pos
+    const el = -bb * rad
+    const ar = aa * rad
+    const out = new vec3(rr * Math.cos(el) * Math.sin(ar), rr * Math.sin(el), -rr * Math.cos(el) * Math.cos(ar))
+    return camPos.add(camRot.multiplyVec3(out))
+  }
   getActiveMode(): string { return this.mode }
   getWorldPos(): vec3 { return this.sceneObject.getTransform().getWorldPosition() }
   isDrifting(): boolean { return this.drifting }
@@ -122,8 +157,10 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   }
   /** Elevation (deg, relative to the view centre) of the bar's top edge, at full size: cards keep clear of it. */
   getTopViewAngleDeg(): number {
-    return this.getViewAngles().y + (Math.atan2(this.menuHeightCm / 2, this.distanceCm) * 180) / Math.PI
+    return this.getViewAngles().y + (Math.atan2(this.menuHeightCm / 2, this.dist) * 180) / Math.PI
   }
+  /** What the hint pill attaches to: the bar's root (the object the lazy follow moves), the local Y of its top edge, and its authored distance (cm). */
+  getHintAnchor(): {root: SceneObject; topCm: number; distCm: number} { return {root: this.sceneObject, topCm: this.menuHeightCm / 2, distCm: this.dist} }
   isAllRoutesOn(): boolean { return this.allRoutesOn }
   setAllRoutesOn(on: boolean): void {
     this.allRoutesOn = on
@@ -170,7 +207,7 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
   }
   /** Cluster of three round toggle buttons: lit = solid white disc, the rest quiet frosted discs. */
   private build(): void {
-    const D = this.distanceCm
+    const D = this.dist
     const k = D / 110
     const B = this.buttonWidthCm // round button diameter
     this.sceneObject.createComponent("Component.Canvas")
@@ -240,31 +277,46 @@ export class SkyHangarMenuBarUI extends BaseScriptComponent {
     const camPos = ct.getWorldPosition()
     const camRot = ct.getWorldRotation()
     const fwd = camRot.multiplyVec3(new vec3(0, 0, -1))
-    // Ideal spot: a fixed point below the view centre (head-relative).
-    const b = (this.belowViewDeg * Math.PI) / 180
-    const idealLocal = new vec3(0, -Math.sin(b) * this.distanceCm, -Math.cos(b) * this.distanceCm)
-    const ideal = camPos.add(camRot.multiplyVec3(idealLocal))
     const tr = this.sceneObject.getTransform()
+    const D = this.dist
+    // First placement waits until the camera has a real pose (not the default origin/identity), or 30 frames at most,
+    // so the bar lands in the same spot on first open and on reload. Hidden (scale 0) until then.
     if (!this.placed) {
-      tr.setWorldPosition(ideal)
+      const camDefault = camPos.length < 0.01 && Math.abs(camRot.w) > 0.9999
+      this.headF = camPos
+      if (this.frames < 2 || (camDefault && this.frames < 30)) {
+        tr.setLocalScale(vec3.zero())
+        return
+      }
+      tr.setWorldPosition(camPos.add(camRot.multiplyVec3(this.idealLocal())))
       this.placed = true
     }
-    // Lazy follow: start drifting once the bar is off its spot by more than the deadzone, then settle.
+    // Low-pass the head position used for the follow (walking head bob is what makes a head-locked bar shake).
+    this.headF = this.headF.add(camPos.sub(this.headF).uniformScale(1 - Math.exp(-dt / HEAD_TAU_S)))
+    // Target in head space: always the same angle below the gaze centre, at distance D.
+    const idealDir = camRot.multiplyVec3(this.idealLocal()).uniformScale(1 / D)
+    // Lazy follow: dead-zone, then exponential smoothing as a ROTATION around the head (slerp of the direction) with the
+    // distance eased to D. Never a straight-line lerp, so the bar can't pass through the face.
     const cur = tr.getWorldPosition()
-    const curDir = cur.sub(camPos).normalize()
-    const idealDir = ideal.sub(camPos).normalize()
+    const curVec = cur.sub(this.headF)
+    const curDist = Math.max(0.001, curVec.length)
+    const curDir = curVec.uniformScale(1 / curDist)
     const off = (Math.acos(Math.max(-1, Math.min(1, curDir.dot(idealDir)))) * 180) / Math.PI
-    if (off > this.driftDeadzoneDeg) this.drifting = true
+    if (off > this.driftDeadzoneDeg || Math.abs(curDist - D) > DIST_DEADZONE_CM) this.drifting = true
+    let pos = cur
     if (this.drifting) {
       const k = 1 - Math.exp((-dt * 4.6) / this.settleSeconds) // ~99% settled after settleSeconds
-      tr.setWorldPosition(vec3.lerp(cur, ideal, k))
-      if (off < 0.5) this.drifting = false
-    } else {
-      // Keep the distance right even when not drifting (e.g. walking).
-      tr.setWorldPosition(camPos.add(curDir.uniformScale(this.distanceCm)))
+      let axis = curDir.cross(idealDir)
+      if (axis.length < 1e-4) axis = vec3.up() // opposite or aligned: turn about the vertical
+      const newDir = quat.angleAxis(((off * k) * Math.PI) / 180, axis.normalize()).multiplyVec3(curDir)
+      pos = this.headF.add(newDir.uniformScale(curDist + (D - curDist) * k))
+      if (off < 0.5 && Math.abs(curDist - D) < 1) this.drifting = false
     }
+    // Hard limits every frame, after smoothing (see limitToBand): bottom band of the view, distance 70-120 cm from the head.
+    const lim = this.limitToBand(pos, camPos, camRot)
+    if (lim !== cur) tr.setWorldPosition(lim)
     const toCam = camPos.sub(tr.getWorldPosition())
-    if (toCam.length > 0.01) tr.setWorldRotation(quat.lookAt(toCam.normalize(), camRot.multiplyVec3(vec3.up())))
+    if (toCam.length > 0.01) tr.setWorldRotation(quat.lookAt(toCam.normalize(), vec3.up()))
 
     // Dim + compact while looking at the sky; bright when looking down near it or aiming at a button.
     const pitchDeg = (Math.asin(Math.max(-1, Math.min(1, fwd.y))) * 180) / Math.PI

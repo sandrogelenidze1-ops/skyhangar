@@ -21,6 +21,7 @@ import {SkyHangarInfoCardUI, CardContent} from "./SkyHangarInfoCardUI"
 import {buildTrack} from "./SkyHangarRouteMap"
 import {heliTrack} from "./SkyHangarRouteGeo"
 import {SkyHangarLabelsUI} from "./SkyHangarLabelsUI"
+import {HintLogic, HintState, HINT_TEXT} from "./SkyHangarHints"
 import {SkyHangarShelfUI} from "./SkyHangarShelfUI"
 import {DEG, makeObj} from "./SkyHangarUtil"
 
@@ -103,9 +104,17 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private mode: SkyMode = "sky"
   private cardId = ""
+  private frameNo = 0
+  private reticleCacheId = ""
+  private reticleCacheLines: string[] = []
+  private routeSamples: vec3[] = []
+  private routeSamplesFrame = 0
+  private hintState: HintState = {mode: "sky", aiming: false, pinned: false, holding: false, overPad: false, busy: false}
+  private hints = new HintLogic() // which coaching hint shows (each once per session)
   private pinCardSeen = false // the pinned vehicle's card has been opened once; the next tap with it closed unpins
   private collectedCount = 0
   private preloaded = false
+  private preloadJobs: (() => void)[] = []
   private lastCollectedText = ""
   private prevTrigger: Map<Interactor, boolean> = new Map()
   private ready = false
@@ -201,9 +210,21 @@ export class SkyHangarMain extends BaseScriptComponent {
     const pos = this.sky.getMarkerWorldPos(id)
     if (!info || !pos) return false
     this.held.beginScriptedPull(info, pos)
-    this.audio.play("pull")
+    this.audio.play("drag")
     return true
   }
+  /** Simulate a pinch-hold-drag on a Hangar shelf model; it arrives in the hand and stays held (release over "sky" = Release). */
+  inspectShelfObject(id: string): boolean {
+    const e = this.shelf.getEntries().find((x) => x.info.id === id)
+    if (!e) return false
+    this.held.finishShelfReturn()
+    if (this.held.getState() !== "none") return false
+    this.shelf.setEntryHidden(id, true)
+    this.held.beginScriptedInspect(e.info, this.shelf.getShelfWorldPos(), this.inspectHooks(id))
+    return true
+  }
+  /** Test hook: leave both drop icons open as if stuck (the safety timeout closes them). */
+  debugForceIconsOpen(): void { this.held.debugForceIconsOpen() }
   moveHeldOverPad(): void { this.held.moveOverPad() }
   moveHeldOverSkyPad(): void { this.held.moveOverSkyPad() }
   /** Release the held model: true = hangar pad, "sky" = Sky return pad, false = elsewhere (throw), omitted = real position. */
@@ -228,11 +249,13 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.sky.onPullStart.add((req) => this.onSkyPull(req))
     this.held.onCollected.add((info) => this.onCollected(info))
     this.held.onThrown.add((info) => {
-      this.audio.play("throw")
+      this.audio.play("sky") // one whoosh when it is thrown like a paper plane (no engine sound)
       this.log("thrown " + info.id)
     })
     this.held.onReturned.add((info) => this.log("returned " + info.id))
-    this.held.onSentToSky.add((info) => this.log("sent back to sky " + info.id))
+    this.held.onSentToSky.add((info) => {
+      this.log("sent back to sky " + info.id)
+    })
     this.radar.onBlipTap.add((info) => this.onBlipTap(info))
     this.shelf.onInspect.add((req) => this.onInspect(req))
     this.shelf.onTap.add((tap) => this.onShelfTap(tap))
@@ -251,6 +274,8 @@ export class SkyHangarMain extends BaseScriptComponent {
       this.applyRoutes()
     })
     this.infoCard.setMenuTopProvider(() => this.menuBar.getTopViewAngleDeg())
+    const ha = this.menuBar.getHintAnchor()
+    this.labels.attachHintTo(ha.root, ha.topCm, ha.distCm) // the hint pill is a child of the menu bar: it moves exactly with it
     this.infoCard.onClose.add(() => this.hideCard())
     this.shelf.onPageChanged.add(() => this.pushShelfView())
     this.shelfUI.onPrev.add(() => {
@@ -282,6 +307,7 @@ export class SkyHangarMain extends BaseScriptComponent {
 
   private setMode(mode: SkyMode): void {
     this.audio.play("menu")
+    this.held.resetForModeChange() // nothing stays in the hand across a mode switch; the drop icons close
     this.mode = mode
     this.menuBar.setActiveMode(mode)
     if (mode === "radar") this.radar.openInFront()
@@ -309,7 +335,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTap(info: SkyObjectInfo): void {
-    this.audio.play("tap")
     // Pin flow: tap 1 pins (trail stays); tap 2 on the pinned vehicle opens its card; tap 3 closes the card (pin stays);
     // a further tap on it with the card closed unpins. Another vehicle moves the pin; empty sky unpins (onSkyTapEmpty).
     if (this.cardId === info.id) {
@@ -348,7 +373,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onBlipTap(info: SkyObjectInfo): void {
-    this.audio.play("tap")
     const camPos = this.cameraObject.getTransform().getWorldPosition()
     const radarPos = this.radar.sceneObject.getTransform().getWorldPosition()
     const blip = this.radar.getBlipObject(info.id)
@@ -368,7 +392,6 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyTapEmpty(): void {
-    this.audio.play("tap")
     if (this.cardId) this.hideCard()
     if (this.sky.getPinnedId()) this.log("unpin (empty sky)")
     this.sky.setPinnedTrail("")
@@ -376,7 +399,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   }
 
   private onSkyPull(req: PullRequest): void {
-    this.audio.play("pull")
+    this.audio.play("drag")
     this.held.beginPull(req.info, req.worldPos, req.interactor)
     this.log("pull " + req.info.id)
   }
@@ -386,7 +409,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     this.held.finishShelfReturn()
     if (this.held.getState() !== "none") return
     const id = req.info.id
-    this.audio.play("pull")
+    this.audio.play("drag")
     this.shelf.setEntryHidden(id, true)
     this.held.beginInspect(req.info, req.fromWorld, req.interactor, this.inspectHooks(id))
     this.log("inspect " + id)
@@ -411,7 +434,6 @@ export class SkyHangarMain extends BaseScriptComponent {
     if (tap.info) this.held.finishShelfReturn()
     if (!tap.info || this.held.getState() !== "none") return
     const id = tap.info.id
-    this.audio.play("tap")
     this.shelf.setEntryHidden(id, true)
     this.held.beginView(tap.info, tap.fromWorld, this.inspectHooks(id))
     this.log("view " + id)
@@ -542,6 +564,7 @@ export class SkyHangarMain extends BaseScriptComponent {
   private update(): void {
     if (!this.sky.isBuilt()) return
     if (!this.preloaded && this.shelf.isReady()) {
+      // The pre-filled Hangar is built a few models per frame (it used to be one 1.2 s first frame), then the shelf view is pushed and the Lens is "ready".
       this.preloaded = true
       let n = 0
       for (const id of this.prefillIds) {
@@ -550,24 +573,33 @@ export class SkyHangarMain extends BaseScriptComponent {
         // Pre-filled demo models: spread over the afternoon of the snapshot's previous day.
         const minutes = 12 * 60 + 10 + n * 23
         const when = this.prefillDay + " " + Math.floor(minutes / 60) + ":" + ((minutes % 60) < 10 ? "0" : "") + (minutes % 60)
-        this.shelf.add(info, this.collectedPlace, when, false)
+        this.preloadJobs.push(() => this.shelf.add(info, this.collectedPlace, when, false))
         n++
       }
-      // Fleet examples: one real-type example of every model family not yet on the shelf, so the whole fleet is visible on first open.
-      const have: {[family: string]: boolean} = {}
-      for (const e of this.shelf.getEntries()) have[familyForInfo(e.info)] = true
-      for (const ex of fleetExamples(have)) this.shelf.add(ex.info, ex.where, ex.when, false)
-      this.shelf.setPage(0)
-      this.pushShelfView()
-      this.lastCollectedText = ""
-      this.ready = true
-      this.setRootVisible(this.radar.sceneObject, this.mode === "radar")
-      this.setRootVisible(this.shelf.sceneObject, this.mode === "hangar")
-      this.log("ready: " + this.sky.getMarkerCount() + " sky objects, shelf " + this.shelf.getCount())
+      this.preloadJobs.push(() => {
+        // Fleet examples: one real-type example of every model family not yet on the shelf, so the whole fleet is visible on first open.
+        const have: {[family: string]: boolean} = {}
+        for (const e of this.shelf.getEntries()) have[familyForInfo(e.info)] = true
+        for (const ex of fleetExamples(have)) this.preloadJobs.push(() => this.shelf.add(ex.info, ex.where, ex.when, false))
+        this.preloadJobs.push(() => {
+          this.shelf.setPage(0)
+          this.pushShelfView()
+          this.lastCollectedText = ""
+          this.ready = true
+          this.setRootVisible(this.radar.sceneObject, this.mode === "radar")
+          this.setRootVisible(this.shelf.sceneObject, this.mode === "hangar")
+          this.log("ready: " + this.sky.getMarkerCount() + " sky objects, shelf " + this.shelf.getCount())
+        })
+      })
     }
+    for (let k = 0; k < 3 && this.preloadJobs.length > 0; k++) this.preloadJobs.shift()!()
 
+    // Tags, trail labels and radar labels move slowly: they refresh at 20 Hz (every 3rd frame), not every frame.
+    const slow = ++this.frameNo % 3 === 0
     // Hangar info tags: every visible vehicle shows its own tag under it (the held one hides its tag while it is in the hand).
-    if (this.mode === "hangar") {
+    if (!slow) {
+      // (tags keep their last position until the next 20 Hz refresh)
+    } else if (this.mode === "hangar") {
       const heldId = this.held.isInspecting() ? this.held.getHeldId() : ""
       const ids = this.shelf.getVisibleIds()
       for (let i = 0; i < this.shelfUI.getPlaqueSlotCount(); i++) {
@@ -586,8 +618,10 @@ export class SkyHangarMain extends BaseScriptComponent {
     }
 
     // Trail end labels follow whichever trail is showing (planes: origin + destination codes).
-    const tid = this.sky.getTrailFlightId()
-    if (tid) {
+    const tid = slow ? this.sky.getTrailFlightId() : ""
+    if (!slow) {
+      // (trail end labels keep their last position until the next 20 Hz refresh)
+    } else if (tid) {
       const info = this.sky.getInfo(tid)
       if (info && info.kind === "plane") {
         this.labels.setTrailLabels(this.sky.getTrailOriginPos(), info.origin, info.originCity, this.sky.getTrailDestPos(), info.destination, info.destinationCity)
@@ -604,8 +638,18 @@ export class SkyHangarMain extends BaseScriptComponent {
     const showReticleLabel = !!aimedInfo && !(this.infoCard.isVisible() && this.infoCard.getShownId() === aimed)
     if (showReticleLabel && aimedInfo) {
       const p = this.sky.getReticleWorldPos() ?? this.sky.getMarkerWorldPos(aimed)!
-      this.labels.setReticleLabel(this.reticleLines(aimedInfo), p, true, this.sky.reticleSizeCm * 0.7, this.sky.getRouteSamplesWorld(aimed))
+      if (this.reticleCacheId !== aimed) { // the four text lines never change for an object: built once, not every frame
+        this.reticleCacheId = aimed
+        this.reticleCacheLines = this.reticleLines(aimedInfo)
+        this.routeSamples = this.sky.getRouteSamplesWorld(aimed)
+        this.routeSamplesFrame = this.frameNo
+      } else if (this.frameNo - this.routeSamplesFrame >= 6) { // the route points only move with the head (slowly): refreshed about 10 times a second
+        this.routeSamples = this.sky.getRouteSamplesWorld(aimed)
+        this.routeSamplesFrame = this.frameNo
+      }
+      this.labels.setReticleLabel(this.reticleCacheLines, p, true, this.sky.reticleSizeCm * 0.7, this.routeSamples)
     } else {
+      this.reticleCacheId = ""
       this.labels.setReticleLabel(null, vec3.zero(), false)
     }
 
@@ -620,6 +664,22 @@ export class SkyHangarMain extends BaseScriptComponent {
     } else {
       this.labels.setPadLabels(vec3.zero(), vec3.zero(), false)
     }
+
+    // Aircraft sound: the model's own sound while a Hangar model is pinned for inspection (the whooshes are triggered from the grab / release / throw events).
+    const inspecting = this.held.isInspecting() && this.held.getViewOrigin() === "shelf" && (hs === "flyingIn" || hs === "held" || hs === "viewing")
+    const hi = inspecting ? this.held.getHeldInfo() : null
+    this.audio.setInspect(hi ? {id: hi.id, kind: hi.kind, aircraftType: hi.aircraftType, airlineIcao: hi.airlineIcao} : null)
+
+    // Coaching hint (one at a time, once per session each): just above the bottom menu, gone as soon as the user does the action.
+    const hsx = this.hintState // one reused object: no allocation per frame
+    hsx.mode = this.mode
+    hsx.aiming = !!this.sky.getAimedId()
+    hsx.pinned = !!this.sky.getPinnedId()
+    hsx.holding = holding
+    hsx.overPad = this.held.isPadGlowing() || this.held.isSkyPadGlowing()
+    hsx.busy = hs !== "none" && !holding
+    const hk = this.hints.update(hsx)
+    this.labels.setHint(hk ? HINT_TEXT[hk] : null)
 
     // Edge arrows are quiet while the user handles a toy in their hand or reads a card.
     const busyHand = hs === "flyingIn" || hs === "held" || hs === "collecting" || hs === "thrown" || hs === "returning" || hs === "returningToSky"
@@ -639,7 +699,7 @@ export class SkyHangarMain extends BaseScriptComponent {
     }
 
     // Radar range labels while the radar is open
-    this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])
+    if (slow) this.labels.setRadarLabels(this.mode === "radar" ? this.radar.getRangeLabels() : [])
 
     this.sky.assistActive = this.mode === "sky" && this.held.getState() === "none"
     this.pollTapElsewhere()

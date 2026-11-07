@@ -15,7 +15,8 @@ import {AIRPORTS, SKY_OBJECTS, SkyObjectInfo} from "./SkyHangarFlightData"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
 import {MARK, STROKE, TRAIL} from "./SkyHangarSharedUI"
 import {buildPlaneRoute, getObserver, heliTrack, horizonSpan} from "./SkyHangarRouteGeo"
-import {routeColor, routeWidthMul, routeOpacityMul, routeGlowAlpha, GLOW_WIDTH_MUL} from "./SkyHangarRouteLook"
+import {routeWidthMul, routeOpacityMul, PINNED_WIDTH, ROUTE_COLORS} from "./SkyHangarRouteLook"
+import {SkyHangarBirds} from "./SkyHangarBirds"
 import {PartKit, makeObj, skyDir, skyTangent, clamp01, DEG} from "./SkyHangarUtil"
 import {AimCandidate, HOVER_KEEP_SECONDS, TAP_MAX_SECONDS, dragStarted, isTap, pickAimTarget, rayMoveCm} from "./SkyHangarInput"
 
@@ -42,6 +43,7 @@ interface Marker {
   full: vec3[] // fixed great-circle route through the object along its heading, built once: start -> end
   cum: number[] // cumulative arc length (radians) along full
   s: number // current arc position along full (radians)
+  acc: number // seconds of motion not yet applied (markers move at 20 Hz; the aimed / pinned one every frame)
   rate: number // radians per second along full
   distScale: number // icon size by distance: DIST_SCALE_NEAR (nearest) .. DIST_SCALE_FAR (farthest); labels keep one size
   oldFadeRad: number // soft fade-in length at the old end of the drawn path (helicopters; 0 = none)
@@ -73,7 +75,8 @@ function distanceScale(info: SkyObjectInfo): number {
 // APPARENT SPEED: every aircraft moves along its fixed route at a slow, steady on-screen angular speed (deg/s),
 // like real aircraft seen from the ground. The real ground speed picks the value, clamped to these ranges.
 const PLANE_DEG_PER_SEC: [number, number] = [0.1, 0.5]
-const HELI_DEG_PER_SEC: [number, number] = [0.05, 0.2]
+const HELI_DEG_PER_SEC: [number, number] = [0.2, 0.4] // helicopters: 4x the original pace ([0.05, 0.2]) and below the planes' top speed (0.5); the lower clamp is what set the old speed, trails and route lines follow the path so they stay matched
+const HELI_ROUTE_DEG_PER_KM = 2.8 // sky degrees per km flown for helicopter tracks (4x the original 0.7)
 const SAT_DEG_PER_SEC: [number, number] = [0.3, 0.6]
 const HELI_DEG_PER_KM = 0.7 // sky degrees per km flown, for tracks without a destination (about what the plane routes show)
 const SAT_PASS_SECONDS = 360 // a real satellite pass across the visible arc takes about this long
@@ -81,21 +84,21 @@ const ROUTE_STEPS = 256
 const DOT_SPACING_DEG = 1.2
 const DOT_SIZE_DEG = 0.25
 const DOT_POOL = 200 // 1.2 degree spacing over up to ~240 degrees of sky
+const MARKER_RENDER_ORDER = 10 // above the trail ribbon (4) and its dots (5)
 const DOT_FADE_NEAR_DEG = 1.5 // a dot is gone this close to the plane...
 const DOT_FADE_FAR_DEG = 6 // ...and fully visible from this far
 const TAG_RANGE_KM = 40 // an airport tag is shown only for an airport this close to the observer
 const TAG_MAX_EL_DEG = 2 // ...and sits on the ground line, never higher than this
 const ALL_ROUTE_ALPHA = 0.55 // fraction of the pinned trail's opacity
-const PINNED_WIDTH = 1.6 // selected (pinned) trail line thickness vs the hover trail
 const PINNED_BOOST = 1.18 // selected trail opacity multiplier ("slightly brighter")
 const RIBBON_SAMPLES = 220 // spline samples along each drawn trail (dense, so the ribbon is smooth at any zoom)
 const RIBBON_REBUILD_DEG = 0.04 // the ribbon is re-laid when its vehicle has moved this far along the route
 const RIBBON_END_FADE_DEG = 0.8 // soft fade-out where the line stops short of the glyph
-// Trail colours per kind (rgb).
+// Trail colours per kind (rgb): fixed, the same day and night, shared by the route line, the dotted trail and the radar trail (SkyHangarRouteLook).
 const TRAIL_RGB: {[kind: string]: vec3} = {
-  plane: new vec3(1.0, 0.698, 0.478), // warm peach-coral #FFB27A
-  helicopter: new vec3(0.498, 0.89, 0.69), // mint #7FE3B0
-  satellite: new vec3(0.498, 0.839, 1.0) // cool cyan #7FD6FF
+  plane: new vec3(ROUTE_COLORS.plane[0], ROUTE_COLORS.plane[1], ROUTE_COLORS.plane[2]), // neon green 80, 255, 140
+  helicopter: new vec3(ROUTE_COLORS.helicopter[0], ROUTE_COLORS.helicopter[1], ROUTE_COLORS.helicopter[2]), // yellow 255, 215, 40
+  satellite: new vec3(ROUTE_COLORS.satellite[0], ROUTE_COLORS.satellite[1], ROUTE_COLORS.satellite[2]) // neon cyan 0, 240, 255
 }
 // GENTLE PLANE ROUTES: the true sky arc is blended toward a gentler curve, the turn rate is capped and the whole route
 // may only change direction by MAX_TOTAL_TURN, so trails look like a plane trail with a slight Earth-curve bend.
@@ -109,13 +112,13 @@ const HORIZON_END_Y = Math.sin(-1 * DEG) // routes always run on to the horizon 
 interface TrailSet {
   root: SceneObject
   ribbon: Ribbon
-  glow: Ribbon // a wider, fainter copy of the line under it: the slight glow of the day look (hidden at night)
   rgb: vec3
   dots: Seg[]
   mats: Material[]
   alphaScale: number
   boost: number
   widthScale: number
+  opaque: boolean // satellites: full alpha (no peak / all-routes / day multipliers); the tail fade and the shared elevation (horizon) fade still apply
   lastS: number // arc position the ribbon was last laid for (NaN = must rebuild)
   dotS: number[]
   dotElev: number[] // elevation fade (0..1) of each dot, fixed by its place on the route
@@ -208,8 +211,13 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   @ui.group_end
 
   private kit!: PartKit
+  private birds: SkyHangarBirds | null = null // far-away birds that fly by now and then (decor only: not selectable, not in the radar)
   private markers: Marker[] = []
   private markerById: {[id: string]: Marker} = {}
+  private frameNo = 0
+  private gazeCache: vec3 | null = null
+  private assistPick: {id: string; angleDeg: number} | null = null // last aim-assist pick (recomputed at 20 Hz)
+  private assistFrame = -99
   private main!: TrailSet // the pinned / aimed full trail
   private trailId = ""
   private pinnedId = ""
@@ -349,6 +357,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.main = this.makeTrailSet(this.sceneObject, "Trail", DOT_POOL, 1)
     if (this.allRoutes) this.buildAllRoutes()
     this.buildReticle()
+    this.birds = new SkyHangarBirds(this.sceneObject, this.unlitMaterial)
     this.built = true
   }
 
@@ -371,6 +380,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     visual.getTransform().setLocalRotation(quat.lookAt(dir.uniformScale(-1), tan))
     const color = this.getMarkerColor(info.kind)
     const glyph = buildGlyph(this.kit, visual, "Glyph", info.kind, this.glyphSpanCm, color)
+    setRenderOrderDeep(glyph.root, MARKER_RENDER_ORDER) // the marker is always drawn above the trail (ribbon 4, dots 5)
     const ds = distanceScale(info)
     visual.getTransform().setLocalScale(new vec3(ds, ds, ds))
     const toDirs = (pts: number[][]) => (pts || []).map((p) => skyDir(p[0], p[1]))
@@ -425,7 +435,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     }
     const m: Marker = {
       info, wrapper, visual, glyph, color, dir, tangent, interactable, hovered: false, bright: 0, flash: 0,
-      past, ahead, full, cum, s: s0, rate: motionRate(info, ahd, cum[cum.length - 1]), distScale: distanceScale(info), oldFadeRad: oldFade, originTag, destTag
+      past, ahead, full, cum, s: s0, acc: 0, rate: motionRate(info, ahd, cum[cum.length - 1]), distScale: distanceScale(info), oldFadeRad: oldFade, originTag, destTag
     }
     this.markers.push(m)
     this.markerById[info.id] = m
@@ -449,8 +459,6 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       m.mainPass.baseColor = new vec4(1, 1, 1, ((l + 1) / TRAIL.levels) * alphaScale)
       mats.push(m)
     }
-    const glow = new Ribbon(root, "TrailGlow", RIBBON_SAMPLES, 3, LINE_EXTENT, LINE_CORE)
-    glow.setVisible(false)
     const ribbon = new Ribbon(root, "TrailLine", RIBBON_SAMPLES, 4, LINE_EXTENT, LINE_CORE)
     const dots: Seg[] = []
     for (let i = 0; i < dotN; i++) {
@@ -462,7 +470,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       dots.push({obj, rmv, level: -1})
     }
     root.enabled = false
-    return {root, ribbon, glow, rgb: TRAIL_RGB.plane, dots, mats, alphaScale, boost: 1, widthScale: 1, lastS: NaN, dotS: [], dotElev: [], dotCount: 0, origin: null, dest: null, points: 0}
+    return {root, ribbon, rgb: TRAIL_RGB.plane, dots, mats, alphaScale, boost: 1, widthScale: 1, opaque: false, lastS: NaN, dotS: [], dotElev: [], dotCount: 0, origin: null, dest: null, points: 0}
   }
 
   /** A fainter copy of the full trail (solid behind, dotted ahead, same gradient and width) for every vehicle, built once. */
@@ -471,7 +479,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     this.routesRoot = root
     for (const m of this.markers) {
       const total = m.cum[m.cum.length - 1]
-      const dotN = m.info.kind === "plane" || m.info.kind === "helicopter" ? Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG))) : 0
+      const dotN = Math.min(DOT_POOL, Math.floor(total / (DOT_SPACING_DEG * DEG)))
       const t = this.makeTrailSet(root, "Route_" + m.info.id, dotN, ALL_ROUTE_ALPHA)
       this.routeSets[m.info.id] = t
       this.layoutTrail(t, m)
@@ -530,8 +538,8 @@ export class SkyHangarSkyController extends BaseScriptComponent {
   }
 
   /**
-   * Day look of the route lines and trails (0 at night .. 1 by day), called from the preview backdrop's Time of Day update (never on a device). By day the lines are a
-   * bright neon green (RGB 80, 255, 140), 1.5x thicker, fully opaque with a slight glow, so they stand out from the bright sky. Cheap: only when the value moved a little.
+   * Day look of the route lines and trails (0 at night .. 1 by day), called from the preview backdrop's Time of Day update (never on a device). By day the lines are
+   * 1.5x thicker, fully opaque (no glow), so they stand out from the bright sky; the COLOUR never changes (fixed per type). Cheap: only when the value moved a little.
    */
   setDayAmount(day: number): void {
     const d = Math.max(0, Math.min(1, day))
@@ -549,17 +557,16 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     }
   }
   getDayAmount(): number { return this.dayAmt }
-  private dotSizeCm(): number { return this.skyDomeRadiusCm * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2) * routeWidthMul(this.dayAmt) }
+  private dotSizeCm(): number { return this.skyDomeRadiusCm * 2 * Math.tan((DOT_SIZE_DEG * DEG) / 2) } // one size at every time of day
 
-  /** Dot materials re-tinted for the object being aimed at (alpha per level is fixed); `c` is the kind's night colour, the day look is applied on top. */
+  /** Ribbon + dot materials tinted for the object's type (alpha per level is fixed); `c` is the kind's fixed colour, the same day and night. */
   private tintTrail(t: TrailSet, c: vec3, boost: number): void {
     t.rgb = c
     t.boost = boost
-    const col = routeColor([c.x, c.y, c.z], this.dayAmt)
-    const op = routeOpacityMul(this.dayAmt)
+    const col = [c.x, c.y, c.z]
+    const op = routeOpacityMul(1) // dots: the same (day) brightness at every time of day
     t.ribbon.setColor(new vec4(col[0], col[1], col[2], 1))
-    t.glow.setColor(new vec4(col[0], col[1], col[2], 1))
-    for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(col[0], col[1], col[2], Math.min(1, ((l + 1) / t.mats.length) * t.alphaScale * boost * op))
+    for (let l = 0; l < t.mats.length; l++) t.mats[l].mainPass.baseColor = new vec4(col[0], col[1], col[2], t.opaque ? (l + 1) / t.mats.length : Math.min(1, ((l + 1) / t.mats.length) * t.alphaScale * boost * op))
   }
   private setLevel(t: TrailSet, s: Seg, alpha: number): void {
     const n = t.mats.length
@@ -600,6 +607,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const kind = m.info.kind
     const toLocal = (d: vec3) => d.uniformScale(r)
     t.widthScale = pinned ? PINNED_WIDTH : 1
+    t.opaque = kind === "satellite"
     const total = m.cum[m.cum.length - 1]
     t.points = m.past.length + m.ahead.length
     t.origin = m.originTag ? toLocal(m.originTag) : null
@@ -613,7 +621,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     t.dotS = []
     t.dotElev = []
     t.dotCount = 0
-    if (kind === "plane" || kind === "helicopter") {
+    {
       t.dotCount = Math.min(t.dots.length, Math.floor(total / (DOT_SPACING_DEG * DEG)))
       const dotCm = this.dotSizeCm()
       for (let k = 0; k < t.dotCount; k++) {
@@ -641,11 +649,11 @@ export class SkyHangarSkyController extends BaseScriptComponent {
 
     if (!(Math.abs(s - t.lastS) < RIBBON_REBUILD_DEG * DEG)) {
       t.lastS = s
-      const sat = kind === "satellite"
-      const x1 = sat ? total : s - TRAIL.gapFromGlyphCm / r
+      // The line starts behind the tail: half the glyph's drawn length (span x its distance scale) plus a small gap, so it never touches the marker.
+      const gapCm = (this.glyphSpanCm * m.visual.getTransform().getLocalScale().x) / 2 + TRAIL.gapFromGlyphCm
+      const x1 = s - gapCm / r
       if (x1 <= 0.002) {
         t.ribbon.setVisible(false)
-        t.glow.setVisible(false)
       } else {
         const N = RIBBON_SAMPLES
         const pts: vec3[] = []
@@ -663,21 +671,15 @@ export class SkyHangarSkyController extends BaseScriptComponent {
           hw.push(halfW * k)
           // Opacity depends on elevation only (smoothstep between fadeStartElevDeg and fadeEndElevDeg); the only other fade is the short
           // soft end where the line stops just short of the glyph.
-          const a = (sat ? TRAIL.peakBehind * 0.8 : TRAIL.peakBehind * smoothstep01((x1 - x) / (RIBBON_END_FADE_DEG * DEG))) * (m.oldFadeRad > 0 ? smoothstep01(x / m.oldFadeRad) : 1)
+          const tail = smoothstep01((x1 - x) / (RIBBON_END_FADE_DEG * DEG))
+          if (t.opaque) { al.push(tail * (m.oldFadeRad > 0 ? smoothstep01(x / m.oldFadeRad) : 1) * this.elevFade(pd.y)); continue } // satellites: alpha 1.0, then the same tail + elevation (horizon) fade as every other trail
+          const a = (TRAIL.peakBehind * tail) * (m.oldFadeRad > 0 ? smoothstep01(x / m.oldFadeRad) : 1)
           al.push(Math.min(1, a * this.elevFade(pd.y) * t.alphaScale * t.boost * dayOp))
         }
         t.ribbon.setVisible(true)
         t.ribbon.fill(pts, hw, al)
-        // the slight glow of the day look: the same line, wider and much fainter, in the same colour (no dark outline)
-        const ga = routeGlowAlpha(this.dayAmt)
-        if (ga > 0.005) {
-          t.glow.setVisible(true)
-          t.glow.fill(pts, hw.map((v) => v * GLOW_WIDTH_MUL), al.map((v) => v * ga))
-        } else t.glow.setVisible(false)
       }
     }
-    if (kind === "satellite") return
-
     // Ahead: dots stay anchored on the route and fade by elevation like the line. Each dot ramps out as the vehicle
     // closes in (full at DOT_FADE_FAR_DEG, gone at DOT_FADE_NEAR_DEG) so none ever overlaps the glyph.
     for (let k = 0; k < t.dotCount; k++) {
@@ -685,7 +687,7 @@ export class SkyHangarSkyController extends BaseScriptComponent {
       const sk = t.dotS[k]
       if (sk <= s) { this.show(d, false); continue }
       const prox = smoothstep01(((sk - s) / DEG - DOT_FADE_NEAR_DEG) / (DOT_FADE_FAR_DEG - DOT_FADE_NEAR_DEG))
-      this.put(t, d, TRAIL.peakAhead * prox * t.dotElev[k])
+      this.put(t, d, t.opaque ? prox * t.dotElev[k] : TRAIL.peakAhead * prox * t.dotElev[k])
     }
   }
 
@@ -711,8 +713,19 @@ export class SkyHangarSkyController extends BaseScriptComponent {
     const dt = getDeltaTime()
     const camPos = this.cameraObject.getTransform().getWorldPosition()
     this.sceneObject.getTransform().setWorldPosition(camPos)
-    for (const m of this.markers) {
-      this.moveMarker(m, dt)
+    this.frameNo++
+    if (this.birds) {
+      if (!this.gazeCache || this.frameNo % 3 === 0) this.gazeCache = this.sceneObject.getTransform().getWorldRotation().invert().multiplyVec3(this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1))) // gaze direction in the sky root's frame (20 Hz is plenty for the birds' centre-of-view fade)
+      this.birds.update(dt, this.gazeCache)
+    }
+    for (let mi = 0; mi < this.markers.length; mi++) {
+      const m = this.markers[mi]
+      // Markers drift a fraction of a degree per second: moving each at 20 Hz (staggered) looks identical and saves two thirds of the route maths; the aimed / pinned one stays per frame.
+      m.acc += dt
+      if ((this.frameNo + mi) % 3 === 0 || m.hovered || m.info.id === this.pinnedId) {
+        this.moveMarker(m, m.acc)
+        m.acc = 0
+      }
       const want = m.hovered || m.info.id === this.pinnedId ? 1 : 0
       m.flash = Math.max(0, m.flash - dt * 0.8)
       const target = Math.max(want, m.flash)
@@ -777,12 +790,17 @@ export class SkyHangarSkyController extends BaseScriptComponent {
         if (d && o && it.isActive()) { ray = {o, d}; break }
       }
       if (!ray) ray = {o: camPos, d: this.cameraObject.getTransform().getWorldRotation().multiplyVec3(new vec3(0, 0, -1))}
-      const aim: AimCandidate[] = this.markers.map((m) => {
-        const p = m.wrapper.getTransform().getWorldPosition()
-        return {id: m.info.id, dir: p.sub(ray!.o).normalize(), distCm: p.distance(camPos)}
-      })
-      const pick = pickAimTarget(aim, ray.d, this.aimAssistDeg)
-      if (pick) cands.push({m: this.markerById[pick.id], ang: pick.angleDeg})
+      if (this.frameNo - this.assistFrame >= 3) { // the 18-marker candidate list + sort is rebuilt at 20 Hz, not every frame
+        this.assistFrame = this.frameNo
+        const aim: AimCandidate[] = this.markers.map((m) => {
+          const p = m.wrapper.getTransform().getWorldPosition()
+          return {id: m.info.id, dir: p.sub(ray!.o).normalize(), distCm: p.distance(camPos)}
+        })
+        const pick = pickAimTarget(aim, ray.d, this.aimAssistDeg)
+        this.assistPick = pick ? {id: pick.id, angleDeg: pick.angleDeg} : null
+      }
+      const pk = this.assistPick
+      if (pk) cands.push({m: this.markerById[pk.id], ang: pk.angleDeg})
     }
     let best: {m: Marker; ang: number} | null = null
     for (const c of cands) if (!best || c.ang < best.ang) best = c
@@ -909,8 +927,8 @@ function splineAt(path: vec3[], cum: number[], x: number): vec3 {
 // ---------- ribbon: one flat strip lying on the dome; opacity comes from a small texture (the shared unlit shader has no vertex colour) ----------
 
 const TRAIL_TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material
-const LINE_EXTENT = 1.0 // strip half width = the nominal half width; opacity is full to LINE_CORE of it, then feathers to zero
-const LINE_CORE = 0.45
+const LINE_EXTENT = 0.72 // strip half width as a fraction of the nominal half width (about the visible width the old feathered line had)
+const LINE_CORE = LINE_EXTENT // opaque across the whole strip: crisp solid edges, no soft outer line
 const profileTex: {[key: string]: Texture} = {}
 
 /** Texture whose alpha = u * edge(v): u carries the along-line opacity (set per vertex), v is across the strip (soft edge). */
@@ -936,7 +954,7 @@ function ribbonTexture(key: string, extent: number, coreEnd: number): Texture {
 }
 
 let dotTex: Texture | null = null
-/** Soft round dot: white with a radial alpha falloff. */
+/** Crisp round dot: white disc with a hard (one texel anti-aliased) edge. */
 function dotTexture(): Texture {
   if (dotTex) return dotTex
   const N = 32
@@ -949,7 +967,7 @@ function dotTexture(): Texture {
       data[k] = 255
       data[k + 1] = 255
       data[k + 2] = 255
-      data[k + 3] = Math.round(255 * (1 - smoothstep01((r - 0.45) / 0.55)))
+      data[k + 3] = Math.round(255 * (1 - smoothstep01((r - 0.66) / 0.08)))
     }
   }
   ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, N, N, data)
@@ -969,6 +987,11 @@ function dotQuad(): RenderMesh {
   b.updateMesh()
   dotQuadMesh = b.getMesh()
   return dotQuadMesh
+}
+
+function setRenderOrderDeep(o: SceneObject, order: number): void {
+  for (const c of o.getComponents("Component.RenderMeshVisual")) (c as RenderMeshVisual).setRenderOrder(order)
+  for (let i = 0; i < o.getChildrenCount(); i++) setRenderOrderDeep(o.getChild(i), order)
 }
 
 class Ribbon {
@@ -1207,7 +1230,7 @@ function motionRate(info: SkyObjectInfo, aheadRad: number, total: number): numbe
   const kmPerSec = (info.speedKt * 1.852) / 3600
   const clampDeg = (rate: number, r: [number, number]) => Math.max(r[0] * DEG, Math.min(r[1] * DEG, rate))
   if (info.kind === "satellite") return clampDeg(total / SAT_PASS_SECONDS, SAT_DEG_PER_SEC)
-  if (info.kind === "helicopter") return clampDeg(kmPerSec * HELI_DEG_PER_KM * DEG, HELI_DEG_PER_SEC)
+  if (info.kind === "helicopter") return clampDeg(kmPerSec * HELI_ROUTE_DEG_PER_KM * DEG, HELI_DEG_PER_SEC)
   const ap = AIRPORTS[info.destination]
   const remKm = ap ? haversineKm(info.lat, info.lon, ap.lat, ap.lon) : kmPerSec * info.arrivingInMin * 60
   const radPerKm = remKm > 1 ? aheadRad / remKm : HELI_DEG_PER_KM * DEG

@@ -7,7 +7,7 @@
 // comes from which style and which cells the UVs pick. Windows flicker by repainting just the two flicker columns of each style (a small rectangle).
 // Every colour is lifted to the time-of-day luminance floor and the horizon-step compensation is baked per atlas. All opaque, all procedural.
 
-import {minLuminance, editorTone} from "./SkyHangarUtil"
+import {minLuminance, editorTone, EDITOR_SAT} from "./SkyHangarUtil"
 
 type RGB = [number, number, number]
 
@@ -199,35 +199,72 @@ function paneLit(v: BayVariant, vi: number, ft: FacadeTime, k: number): number {
   return lit
 }
 
-/** The modern facades. One bay = one floor (rows 0..20 are the floor, 21..23 the slab edge, already painted), so every lit pattern follows the floors. */
+/**
+ * The modern facades. One bay = one floor (rows 0..20 are the floor, 21..23 the slab edge, already painted), so every lit pattern follows the floors.
+ * Real-architecture proportions: glass bands are about 55-80% of a floor, an OPAQUE spandrel panel sits between the glass bands, mullions are thin
+ * (1 px, lower contrast than the frame so they do not shimmer at distance), the glass has a soft vertical reflection gradient (sky-bright at the top,
+ * deeper at the bottom) and a faint per-pane tone step, and the corner / roofline bays get a slightly darker frame.
+ */
 function paintModern(v: BayVariant, vi: number, P: Pal, ft: FacadeTime): void {
-  const glass = (y: number, y0: number, y1: number): RGB => mixc(P.glassTop, P.glassBot, (y - y0) / Math.max(1, y1 - y0))
+  const dark = minLuminance(mul(P.frame, 0.8), ft.floor) // frame at corners and the roofline: a little darker, still above the luminance floor
+  const mull = mixc(P.frame, P.glassBot, 0.4) // thin mullion: close to the glass tone so a single pixel line stays calm
+  const spandrel = minLuminance(mixc(P.wall, P.glassBot, 0.3), ft.floor) // opaque panel between glass bands: never lit
+  const spandrelTop = minLuminance(mul(spandrel, 0.86), ft.floor) // shadow line under the glass sill
   const lit = (k: number): number => paneLit(v, vi, ft, k)
-  if (P.kind === "ribbon") { // a continuous horizontal band of glass across the whole bay (and so across the whole building)
-    fill(0, 4, BAY_W - 1, 4, P.frame)
-    fill(0, 17, BAY_W - 1, 17, P.frame)
-    for (let y = 5; y <= 16; y++) for (let x = 0; x < BAY_W; x++) put(x, y, mixc(glass(y, 5, 16), v.warm, lit(x < 10 ? 0 : 1) * 0.9))
-    fill(0, 18, BAY_W - 1, 18, P.bandHi) // slab edge under the ribbon
-  } else if (P.kind === "curtain") { // glass grid: 2 x 2 panes per bay, thin mullions and transoms
-    for (let y = 1; y <= 19; y++) for (let x = 0; x < BAY_W; x++) put(x, y, mixc(glass(y, 1, 19), v.warm, lit((x < 10 ? 0 : 1) + (y < 11 ? 0 : 2)) * 0.9))
-    fill(0, 1, 0, 20, P.frame)
-    fill(10, 1, 10, 20, P.frame)
-    fill(0, 1, BAY_W - 1, 1, P.frame)
-    fill(0, 11, BAY_W - 1, 11, P.frame)
-    fill(0, 20, BAY_W - 1, 20, P.frame)
-  } else if (P.kind === "panes") { // one large floor-to-ceiling pane with piers either side
-    fill(2, 1, 17, 20, P.frame)
-    for (let y = 2; y <= 19; y++) fill(3, y, 16, y, mixc(glass(y, 2, 19), v.warm, lit(0) * 0.9))
-    fill(2, 20, 17, 20, P.bandHi)
-  } else { // fins: vertical wall fins every 5 px with a glass strip between them
-    for (let y = 1; y <= 19; y++) {
-      for (let x = 0; x < BAY_W; x++) {
-        if (x % 5 < 2) put(x, y, P.bandHi)
-        else put(x, y, mixc(glass(y, 1, 19), v.warm, lit(Math.floor(x / 5)) * 0.9))
-      }
-    }
-    fill(0, 20, BAY_W - 1, 20, P.bandLo)
+  // glass with the vertical reflection gradient: the upper fifth catches the sky, then it deepens toward the sill; each pane steps by up to +-2%
+  const glass = (y: number, y0: number, y1: number, k: number): RGB => {
+    const t = (y - y0) / Math.max(1, y1 - y0)
+    const sheen = 1 + 0.07 * Math.pow(1 - t, 3)
+    return mul(mixc(P.glassTop, P.glassBot, t), sheen * (1 + 0.02 * (((k * 37) % 5) - 2) / 2))
   }
+  const pane = (x0: number, x1: number, y0: number, y1: number, k: number): void => {
+    const l = lit(k) * 0.9
+    for (let y = y0; y <= y1; y++) fill(x0, y, x1, y, mixc(glass(y, y0, y1, k), v.warm, l))
+  }
+  const bandRows = (y0: number, y1: number, c: number[]): void => fill(0, y0, BAY_W - 1, y1, c)
+  if (P.kind === "ribbon") { // continuous horizontal glass band, soffit above, opaque spandrel below, a mullion every half bay
+    bandRows(0, 2, P.bandLo)
+    bandRows(3, 3, P.frame)
+    pane(0, 9, 4, 13, 0)
+    pane(10, 19, 4, 13, 1)
+    bandRows(14, 14, P.frame)
+    bandRows(15, 15, spandrelTop)
+    bandRows(16, 20, spandrel)
+    fill(0, 4, 0, 13, mull)
+    fill(10, 4, 10, 13, mull)
+  } else if (P.kind === "curtain") { // glass grid: 2 x 2 panes, thin mullions and a transom, spandrel panel at the slab
+    bandRows(0, 0, P.frame)
+    pane(0, 9, 1, 7, 0)
+    pane(10, 19, 1, 7, 1)
+    bandRows(8, 8, mull)
+    pane(0, 9, 9, 15, 0) // both pane rows of a floor share one light, so lit windows read as whole floor columns, not a checkerboard
+    pane(10, 19, 9, 15, 1)
+    bandRows(16, 16, P.frame)
+    bandRows(17, 20, spandrel)
+    fill(0, 1, 0, 15, mull)
+    fill(10, 1, 10, 15, mull)
+  } else if (P.kind === "panes") { // one floor-to-ceiling pane between piers, a hairline centre mullion, a low kick panel
+    bandRows(0, 0, P.frame)
+    fill(0, 1, 1, 20, P.wall)
+    fill(18, 1, 19, 20, P.wall)
+    pane(2, 17, 1, 17, 0)
+    fill(9, 1, 9, 17, mull)
+    bandRows(18, 18, P.frame)
+    fill(2, 19, 17, 20, spandrel)
+  } else { // fins: floor-to-ceiling glass between thin vertical fins (a light face and a shadow beside it)
+    bandRows(0, 0, P.frame)
+    for (let k = 0; k < 4; k++) {
+      const x0 = k * 5
+      fill(x0, 1, x0, 19, P.bandHi)
+      pane(x0 + 1, x0 + 3, 1, 19, k)
+      fill(x0 + 4, 1, x0 + 4, 19, P.bandLo)
+    }
+    bandRows(20, 20, P.bandLo)
+  }
+  // darker frame at the corners and the roofline
+  if (v.kind === "L") fill(0, 0, 1, 20, dark)
+  else if (v.kind === "R") fill(BAY_W - 2, 0, BAY_W - 1, 20, dark)
+  else if (v.kind === "T") fill(0, 0, BAY_W - 1, 2, dark)
 }
 
 function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: FacadeTime): void {
@@ -293,13 +330,22 @@ function paintBay(v: BayVariant, vi: number, pal: Pal, palShade: Pal, ft: Facade
 /** Write one painted variant (current contents of `buf`) into an atlas data array at the cell (col, row), with the uniform editor tone. */
 function writeCell(d: Uint8Array, col: number, row: number): void {
   const ox = col * BAY_W, oy = row * BAY_H
+  // editorTone (SkyHangarUtil) inlined: the same arithmetic, without an array and three closures per pixel; runs of equal pixels (flat fills) reuse the last result.
+  let lr = -1, lg = -1, lb = -1, o0 = 0, o1 = 0, o2 = 0
   for (let y = 0; y < BAY_H; y++) {
     const r = oy + (BAY_H - 1 - y) // texture row 0 is the bottom of the image
     for (let x = 0; x < BAY_W; x++) {
       const s = (y * BAY_W + x) * 3
       const o = (r * ATLAS_W + ox + x) * 4
-      const t = editorTone([buf[s], buf[s + 1], buf[s + 2]])
-      for (let k = 0; k < 3; k++) d[o + k] = Math.round(255 * t[k])
+      const cr = buf[s], cg = buf[s + 1], cb = buf[s + 2]
+      if (cr !== lr || cg !== lg || cb !== lb) {
+        lr = cr; lg = cg; lb = cb
+        const l = cr * 0.3 + cg * 0.4 + cb * 0.3
+        o0 = Math.round(255 * Math.max(0, Math.min(1, (202 * Math.max(0, Math.min(1, l + (cr - l) * EDITOR_SAT)) - 36) / 175)))
+        o1 = Math.round(255 * Math.max(0, Math.min(1, (202 * Math.max(0, Math.min(1, l + (cg - l) * EDITOR_SAT)) - 36) / 175)))
+        o2 = Math.round(255 * Math.max(0, Math.min(1, (202 * Math.max(0, Math.min(1, l + (cb - l) * EDITOR_SAT)) - 36) / 175)))
+      }
+      d[o] = o0; d[o + 1] = o1; d[o + 2] = o2
       d[o + 3] = 255
     }
   }
@@ -339,9 +385,14 @@ export function paintAtlas(a: FacadeAtlas, ft: FacadeTime): void {
 
 const strip = new Uint8Array(2 * BAY_W * BAY_H * 4)
 /** Flicker: repaint only the two flicker window cells of one style (a 40 x 24 px rectangle) and upload just that rectangle. */
+const palCache = new WeakMap<FacadeTime, {[style: number]: {pal: Pal; shade: Pal}}>()
 export function paintFlicker(a: FacadeAtlas, ft: FacadeTime, style: number): void {
-  const pal = makePalette(STYLES[style], ft, 1)
-  const palShade = makePalette(STYLES[style], ft, 0.78)
+  // The palettes depend on the style and the facade time (replaced as a whole whenever Time of Day changes), not on the flicker clock `ft.t`: built once per (ft, style).
+  let byStyle = palCache.get(ft)
+  if (!byStyle) { byStyle = {}; palCache.set(ft, byStyle) }
+  let pp = byStyle[style]
+  if (!pp) { pp = {pal: makePalette(STYLES[style], ft, 1), shade: makePalette(STYLES[style], ft, 0.78)}; byStyle[style] = pp }
+  const pal = pp.pal, palShade = pp.shade
   const row = style * ROWS_PER_STYLE
   for (let vi = 0; vi < 2; vi++) {
     paintBay(VARIANTS[vi], vi, pal, palShade, ft)

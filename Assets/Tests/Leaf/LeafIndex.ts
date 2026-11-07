@@ -25,6 +25,8 @@ import {SH_N_Skyline} from "./Scenarios/SH_N_Skyline"
 import {SH_N_FacadeDay} from "./Scenarios/SH_N_FacadeDay"
 import {SH_N_RouteDay} from "./Scenarios/SH_N_RouteDay"
 import {SH_M7_Variety} from "./Scenarios/SH_M7_Variety"
+import {SH_N_DropIcons} from "./Scenarios/SH_N_DropIcons"
+import {SH_N_Birds} from "./Scenarios/SH_N_Birds"
 import {SH_P1_Perf} from "./Scenarios/SH_P1_Perf"
 import {SH_T8_InputRules} from "./Scenarios/SH_T8_InputRules"
 
@@ -56,6 +58,8 @@ export class LeafIndex extends BaseScriptComponent {
     {id: "n_facade_day", typename: SH_N_FacadeDay.getTypeName()},
     {id: "n_route_day", typename: SH_N_RouteDay.getTypeName()},
     {id: "m7_variety", typename: SH_M7_Variety.getTypeName()},
+    {id: "n_drop_icons", typename: SH_N_DropIcons.getTypeName()},
+    {id: "n_birds", typename: SH_N_Birds.getTypeName()},
     {id: "p1_perf", typename: SH_P1_Perf.getTypeName()},
     {id: "t8_input_rules", typename: SH_T8_InputRules.getTypeName()},
   ]

@@ -1,4 +1,4 @@
-# SkyHangar: Devpost description (draft)
+# SkyHangar: Devpost description
 
 ## Tagline
 Look up. Tap a plane. Pull it into your hands.
@@ -15,6 +15,7 @@ SkyHangar is a Lens for Specs that turns the sky into a place you can explore, c
 - **Your hangar** is a shelf of everything you've caught, with a plaque for each: airline, flight and route.
 - **Throw** a plane like a paper plane and it flies back to your hand. Helicopters spin their rotors.
 - **Radar** shows the whole sky from above when you can't look up.
+- A **time-of-day slider**, built for the preview, moves the sky from day to dusk to night so you can see the Lens in any light.
 - A slim bar with Sky, Radar and Hangar drifts after you and stays dim until you look down at it. Edge arrows point to aircraft out of view.
 
 ## Who it's for
@@ -30,7 +31,7 @@ I'm a product designer, not a coder, so the whole project followed the Learn AR 
 Design choices made for glasses: the bar drifts after you instead of sticking to your face, the pad only appears when you're holding something, and the radar floats at about 1 m so it fits the display. Near controls are tapped, and far objects are pinched.
 
 ## Data
-The demo runs on a sample sky: a one-time snapshot of flight data from [adsb.lol](https://api.adsb.lol) (ODbL) with routes from [adsbdb.com](https://www.adsbdb.com), and satellite orbits from [CelesTrak](https://celestrak.org). [CHECK: if the build had to hand-write the sample file, say "a sample sky modeled on real flights" instead.] The Lens does not fetch live data. Live data is the next step.
+The demo runs on a sample sky: a real, one-time recorded snapshot of flight data from [adsb.lol](https://api.adsb.lol) (ODbL) with routes from [adsbdb.com](https://www.adsbdb.com), and satellite orbits from [CelesTrak](https://celestrak.org). The Lens never fetches anything at runtime; live data is the next step.
 
 ## Challenges
 - Everything must work in the Lens Studio preview, so the sky is simulated and a mouse click stands in for a pinch.

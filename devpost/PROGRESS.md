@@ -1,42 +1,13 @@
 # Progress
 
-## Phase 0
-- [x] Add `C:\Users\pc1\.local\bin` to user PATH (owner ran it; verified)
+Build is complete. Status at submission time:
 
-## Phase 1 — Learn the hackathon
-- [x] SPECS CLAD docs read
-- [x] Skill pack README read
-- [ ] Devpost overview/rules/resources — HTTP 403 to agent; owner to confirm open questions in REQUIREMENTS.md
-- [x] devpost/REQUIREMENTS.md drafted
+- [x] Lens built end to end: Sky, Radar, Hangar, held-object pull/throw/collect, time-of-day slider, rooftop world, sound, hints.
+- [x] Final Lens tagged and committed; opens and runs in Lens Studio 5.23.2 Preview.
+- [x] README documents the data, simplifications, credits and how to open the project.
+- [x] devpost/DESCRIPTION.md and devpost/DISCLOSURES.md finalized for submission.
+- [x] Presentation video recorded, edited and voiced; under the 3-minute limit.
+- [ ] Repo pushed to GitHub and set Public.
+- [ ] Devpost submission form filled in and submitted.
 
-## Phase 2 — Environment
-- [x] Node v24.19.0 present
-- [x] Git 2.56.0 installed (winget)
-- [x] GitHub CLI 2.103.2 installed (winget)
-- [x] Lens Studio project files present (`specs lens.esproj`, `Assets/`, `Packages/` SIK + UI Kit, `.mcp.json`)
-- [x] Lens Studio MCP tools visible to the agent
-- [ ] Lens Studio Knowledge Base — needs owner logged into Lens Studio (My Lenses > Login)
-- [x] Skill pack installed (plan-lens, reviewed)
-- [x] git init (branch main), .gitignore extended (Cache, Workspaces, Support, locks, skill-pack copies; `.mcp.json` token stays ignored), files staged
-- [x] First commit 21de4d5 (repo-local identity: Sandro Gelenidze)
-- [x] Lens Studio MCP verified live (ListInstalledPackages: SIK 2.0.0, UI Kit 2.0.0)
-- [x] ls-extensions marketplace added
-- [ ] CLAD plugin (`ls-clad@ls-extensions`) installed — owner to run `/plugin install ls-clad@ls-extensions` then `/reload-plugins`
-
-## Phase 3 — Plan
-- [x] plan-lens run, devpost/design-brief.md written
-- [x] Owner approved brief (status: approved)
-
-## Phase 4 — Build
-- Note (2026-10-28): Building without Lens Studio sign-in — owner can't log in to SPECS right now and asked to skip it. The Lens Studio Knowledge Base tool is not used; the build relies on the installed Lens Studio docs (`Support/*.d.ts`, package sources) and the CLAD API skills instead.
-- [ ] Basic flow
-- [ ] LEAF tests per done criterion
-- [ ] Preview verified
-
-## Phase 5 — Submission package
-- [ ] README.md
-- [ ] devpost/DESCRIPTION.md
-- [ ] devpost/VIDEO_SCRIPT.md
-- [ ] devpost/CHECKLIST.md
-- [ ] devpost/DISCLOSURES.md
-- [ ] Self-review
+See `README.md` for the project itself and `design-brief.md` / `design-changes-*.md` for how it was planned and iterated.

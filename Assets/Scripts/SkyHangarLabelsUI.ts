@@ -6,7 +6,7 @@
 // plus getters for tests. Passive view — positions and strings come from the main script.
 
 import {RoundedRectangle, RoundedRectBlendMode} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
-import {GLASS_READABLE, GLASS, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, fontFor, opticalLiftCm, glassPanel, glassSurface, makeFlex, obj, roleHeightCm, rowHeight, UI_RENDER_ORDER, setRenderOrderTree, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
+import {textWidthEm, emCm, GLASS_READABLE, GLASS, PALETTE, RADIUS, TEXT, addTextRow, applyTextRole, fontFor, opticalLiftCm, glassPanel, glassSurface, makeFlex, obj, roleHeightCm, rowHeight, UI_RENDER_ORDER, setRenderOrderTree, FlexDirection, FlexJustify, FlexAlign} from "./SkyHangarSharedUI"
 
 interface Label {
   root: SceneObject
@@ -15,6 +15,8 @@ interface Label {
   visible: boolean
   distance: number
 }
+
+const RETICLE_SCALE = 0.72 // the aimed label (callsign / type / route / timing block) is 28% smaller than its authored size, layout unchanged
 
 @component
 export class SkyHangarLabelsUI extends BaseScriptComponent {
@@ -71,12 +73,20 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   private arrow!: Label
   private stamp!: Label
   private stampT = 99
+  // coaching hint: one small glass pill just above the bottom menu (head-locked, fades in / out)
+  private hint!: Label
+  private hintGlass!: ReturnType<typeof glassSurface>
+  private hintText = ""
+  private hintAlpha = 0
+  private hintTarget = 0
+  private hintHolder: SceneObject | null = null // child of the menu bar's root; the pill is parented to it
   private trailVisible = false
   private reticle!: Label
   private reticleRows: Text[] = []
   private reticleSmoothed: vec3 | null = null
   private reticleSide = 1
   private reticleCand = -1
+  private reticleScoreT = -1
   private skyFade = 1
   private skyFadeTarget = 1
   private radarDim = 1
@@ -95,6 +105,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     this.arrow = this.makeLabel("EdgeArrowLabel", 80, "Swiss International Air Lines LX29K", null, this.arrowLabelTint, 36)
     this.stamp = this.makeStamp(60, this.stampText, "Ealing, London", 22)
     this.reticle = this.makeReticleLabel()
+    this.hint = this.makeHint()
     for (let i = 0; i < 4; i++) this.radarLabels.push(this.makeLabel("RadarRangeLabel_" + i, 100, "20 km", null, this.padLabelColor, 8))
     this.hangarPadLabel = this.makeLabel("HangarPadLabel", 60, this.hangarPadText, null, this.padLabelColor, 12, true)
     this.skyPadLabel = this.makeLabel("SkyPadLabel", 60, this.skyPadText, null, this.padLabelColor, 12, true)
@@ -144,9 +155,9 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     const inv = camRot.invert()
     const right = camRot.multiplyVec3(vec3.right())
     const up = camRot.multiplyVec3(vec3.up())
-    const hw = this.reticleBlockWidthCm / 2
+    const hw = (this.reticleBlockWidthCm / 2) * RETICLE_SCALE // the block is drawn 28% smaller (uniformly), so it takes that much less room
     const D = 400
-    const hh = (2 * rowHeight("Title", D) + 2 * rowHeight("Label", D) + 0.3 * (D / 110)) / 2
+    const hh = ((2 * rowHeight("Title", D) + 2 * rowHeight("Label", D) + 0.3 * (D / 110)) / 2) * RETICLE_SCALE
     const margin = 3
     const o = offsetCm
     const cands: [number, number][] = [
@@ -156,11 +167,12 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     const local = inv.multiplyVec3(anchorWorld.sub(cam.getWorldPosition()))
     const maxX = -local.z * Math.tan(MathUtils.DegToRad * 20)
     const maxY = -local.z * Math.tan(MathUtils.DegToRad * 17)
-    const pts: vec2[] = avoidWorld.map((q) => {
-      const r = inv.multiplyVec3(q.sub(anchorWorld))
-      return new vec2(r.x, r.y)
-    })
+    let ptsCache: vec2[] | null = null // built only when the side is re-decided (10 Hz), not every frame
     const score = (c: [number, number]): number => {
+      const pts = ptsCache ?? (ptsCache = avoidWorld.map((q) => {
+        const r = inv.multiplyVec3(q.sub(anchorWorld))
+        return new vec2(r.x, r.y)
+      }))
       let hits = 0
       if (Math.abs(local.x + c[0]) + hw > maxX || Math.abs(local.y + c[1]) + hh > maxY) hits += 100 // would leave the display
       const inside = (x: number, y: number) => Math.abs(x - c[0]) < hw + margin && Math.abs(y - c[1]) < hh + margin
@@ -170,10 +182,15 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
       }
       return hits
     }
-    const scores = cands.map(score)
-    let best = 0
-    for (let i = 1; i < cands.length; i++) if (scores[i] < scores[best]) best = i
-    if (this.reticleCand >= 0 && scores[this.reticleCand] <= scores[best]) best = this.reticleCand
+    let best = this.reticleCand
+    const nowT = getTime()
+    if (best < 0 || nowT - this.reticleScoreT >= 0.1) { // which side of the brackets is clear of the trail is re-decided 10 times a second (the block still follows the anchor every frame)
+      this.reticleScoreT = nowT
+      const scores = cands.map(score)
+      best = 0
+      for (let i = 1; i < cands.length; i++) if (scores[i] < scores[best]) best = i
+      if (this.reticleCand >= 0 && scores[this.reticleCand] <= scores[best]) best = this.reticleCand
+    }
     this.reticleCand = best
     const c = cands[best]
     const target = anchorWorld.add(right.uniformScale(c[0])).add(up.uniformScale(c[1]))
@@ -206,7 +223,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   }
   /** UI-layer labels (pads, stamp, radar ranges) render in front of the world-space sky tags. */
   applyUiOrder(): void {
-    for (const l of [this.hangarPadLabel, this.skyPadLabel, this.skyPadCaption, this.stamp, ...this.radarLabels]) setRenderOrderTree(l.root, UI_RENDER_ORDER)
+    for (const l of [this.hangarPadLabel, this.skyPadLabel, this.skyPadCaption, this.stamp, this.hint, ...this.radarLabels]) setRenderOrderTree(l.root, UI_RENDER_ORDER)
   }
 
   private setAlpha(l: Label, a: number): void {
@@ -284,7 +301,92 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
     this.stampT = 0
   }
 
+  /**
+   * Parent the hint pill to the bottom menu bar's root (the object its lazy follow moves), centred on it and HINT_GAP_CM above its top edge.
+   * From then on the pill moves, turns, scales and smooths exactly with the menu; it has no follow logic of its own.
+   * The holder is scaled so the pill keeps its size as seen from the menu's distance (the pill is authored for HINT_D cm).
+   */
+  attachHintTo(menuRoot: SceneObject, menuTopCm: number, menuDistCm: number): void {
+    const holder = obj(menuRoot, "HintHolder", new vec3(0, menuTopCm + SkyHangarLabelsUI.HINT_GAP_CM, 0.3))
+    const s = menuDistCm / SkyHangarLabelsUI.HINT_D
+    holder.getTransform().setLocalScale(new vec3(s, s, s))
+    this.hint.root.setParent(holder)
+    this.hint.root.getTransform().setLocalRotation(quat.quatIdentity())
+    this.hintHolder = holder
+    this.layoutHint()
+  }
+  /** The coaching hint to show (null = fade it out). */
+  setHint(text: string | null): void {
+    if (text) {
+      if (text !== this.hintText) this.applyHintText(text)
+      this.hintTarget = 1
+    } else this.hintTarget = 0
+  }
+  getHintText(): string { return this.hint && this.hint.visible ? this.hintText : "" }
+  getHintAlpha(): number { return this.hintAlpha }
+  getHintWorldPos(): vec3 { return this.hint.root.getTransform().getWorldPosition() }
+
   // ---------- internals ----------
+  private static readonly HINT_D = 90 // the distance the pill's type and size are authored for, cm
+  private static readonly HINT_GAP_CM = 1 // gap between the menu's top edge and the pill's bottom edge (menu units)
+  private hintHeightCm(): number { return emCm(this.hint.big.size) * 1.7 }
+  /** The pill sits on the holder (its bottom edge on the holder origin, centred horizontally). */
+  private layoutHint(): void {
+    if (this.hintHolder) this.hint.root.getTransform().setLocalPosition(new vec3(0, this.hintHeightCm() / 2, 0))
+  }
+
+  /** A small frosted-glass pill with one short line of text (same glass + type as the Collected toast, just smaller). */
+  private makeHint(): Label {
+    const D = SkyHangarLabelsUI.HINT_D
+    const root = obj(this.sceneObject, "HintPill")
+    const glass = glassSurface(root, "HintGlass", new vec2(10, 2), {radiusCm: 1, glow: false})
+    this.hintGlass = glass
+    const content = obj(root, "Content", new vec3(0, 0, 0.6))
+    const so = obj(content, "Text", vec3.zero())
+    const t = so.createComponent("Component.Text") as Text
+    t.text = ""
+    t.depthTest = true
+    applyTextRole(t, "Label", D)
+    t.textFill.color = new vec4(1, 1, 1, 0.95)
+    t.horizontalAlignment = HorizontalAlignment.Center
+    t.verticalAlignment = VerticalAlignment.Center
+    t.horizontalOverflow = HorizontalOverflow.Shrink
+    t.verticalOverflow = VerticalOverflow.Overflow
+    root.getTransform().setLocalScale(vec3.zero())
+    return {root, big: t, small: null, visible: false, distance: D}
+  }
+
+  private applyHintText(text: string): void {
+    this.hintText = text
+    const t = this.hint.big
+    t.text = text
+    const D = SkyHangarLabelsUI.HINT_D
+    const k = D / 110
+    const em = emCm(t.size)
+    const h = this.hintHeightCm()
+    const w = textWidthEm(text) * em + 2 * 1.6 * k + 1.2 * em
+    this.hintGlass.resize(new vec2(w, h))
+    this.hintGlass.rect.cornerRadius = h / 2
+    const lift = opticalLiftCm(text, t.size)
+    t.layoutRect = Rect.create(-w / 2 + 0.8 * k, w / 2 - 0.8 * k, -h / 2 + lift, h / 2 + lift)
+    this.layoutHint()
+  }
+
+  /** Per frame: only the fade in / out. Position, rotation and smoothing come from the menu bar the pill is parented to. */
+  private updateHint(dt: number): void {
+    const step = dt / 0.25
+    this.hintAlpha = this.hintTarget > this.hintAlpha ? Math.min(this.hintTarget, this.hintAlpha + step) : Math.max(this.hintTarget, this.hintAlpha - step)
+    if ((this.hintAlpha <= 0.001 && this.hintTarget === 0) || !this.hintHolder) {
+      if (this.hint.visible) this.hideLabel(this.hint)
+      return
+    }
+    if (!this.hint.visible) {
+      this.hint.visible = true
+      this.hint.root.getTransform().setLocalScale(vec3.one())
+    }
+    this.setAlpha(this.hint, this.hintAlpha * this.hintAlpha * (3 - 2 * this.hintAlpha))
+  }
+
   /** Left-aligned four-row block: callsign (large), code + type (small), ORIGIN > DEST (large), timing (small). */
   private makeReticleLabel(): Label {
     const D = 400
@@ -406,7 +508,8 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
   private place(l: Label, pos: vec3): void {
     l.visible = true
     l.root.getTransform().setWorldPosition(pos)
-    l.root.getTransform().setLocalScale(vec3.one())
+    const s = l === this.reticle ? RETICLE_SCALE : 1
+    l.root.getTransform().setLocalScale(new vec3(s, s, s))
   }
 
   private hideLabel(l: Label): void {
@@ -424,6 +527,7 @@ export class SkyHangarLabelsUI extends BaseScriptComponent {
       this.skyFade = this.skyFade < this.skyFadeTarget ? Math.min(this.skyFadeTarget, this.skyFade + step) : Math.max(this.skyFadeTarget, this.skyFade - step)
       for (const l of [this.origin, this.dest, this.reticle]) this.setAlpha(l, this.skyFade)
     }
+    this.updateHint(getDeltaTime())
     if (this.reticle.visible) l2(this.reticle.root, camRot)
     for (const l of [this.origin, this.dest, this.stamp, this.hangarPadLabel, this.skyPadLabel, this.skyPadCaption, ...this.radarLabels]) {
       if (!l.visible) continue

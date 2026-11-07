@@ -1,5 +1,13 @@
 # SkyHangar — a Specs Lens
 
+## Open it
+
+1. Install [Lens Studio 5.23.2](https://ar.snap.com/lens-studio) (or newer).
+2. Open `specs lens.esproj` in this folder.
+3. Click **Preview**. If the preview panel shows a red "Spectacles Interaction Kit" warning, open the Preview panel's settings and set **Simulation Mode** (or **Device Type Override**) to **Spectacles**, then re-run Preview.
+4. If the preview feels slow, shrink the Preview panel and close the Inspector/Logger tabs — a huge preview panel costs frames.
+
+
 Look up at the sky, tap a plane for its flight card, pinch-hold-drag it down into your hand as a
 small 3D model in its airline's colours, and drop it on the glowing hangar pad to add it to your
 hangar shelf. Throw it anywhere else and it loops back to your hand (helicopters spin their rotors).
@@ -13,7 +21,8 @@ The Lens **never fetches anything at runtime**. All sky objects come from a one-
 at build time (28 Oct 2026, 13:24 UTC, around Ealing, west London) and stored in the project:
 
 - `Assets/Data/flights.json` — the recorded snapshot (human-readable).
-- `Assets/Data/coastline.json` — simplified coastline outlines for the Route tab map (bundled; nothing is fetched).
+- `Assets/Data/coastline.json` — simplified land outlines for the Route tab world map (bundled; nothing is fetched).
+- `Assets/Data/heli_basemap.json` — simplified local basemaps for the helicopter Route tab map (bundled; nothing is fetched).
 - `Assets/Scripts/SkyHangarFlightData.ts` — the same data as a TypeScript module the Lens loads.
 
 What's in it: 12 airliners, 2 helicopters and 4 satellites (ISS, Hubble, Tiangong/CSS core module,
@@ -70,7 +79,8 @@ icons are Google Material Symbols.
 - Flight positions: adsb.lol — ODbL.
 - Routes and airlines: adsbdb.com.
 - Satellite orbital elements: CelesTrak.
-- Map coastlines: Natural Earth 110m coastline (naturalearthdata.com), public domain, simplified for this Lens.
+- World map land outlines: Natural Earth 110m land (naturalearthdata.com), public domain, simplified for this Lens.
+- Map data © OpenStreetMap contributors (ODbL) — helicopter route maps (`Assets/Data/heli_basemap.json`, simplified, bundled; openstreetmap.org/copyright).
 - Font: Plus Jakarta Sans by Tokotype (The Plus Jakarta Sans Project Authors), SIL Open Font License 1.1 (licence text in `licenses/PlusJakartaSans-OFL.txt`).
 - Built with Lens Studio, Spectacles Interaction Kit and Spectacles UI Kit.
 

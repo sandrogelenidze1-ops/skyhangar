@@ -20,6 +20,18 @@ export class MeshBatch {
     return c
   }
 
+  /** A position in the batch (chunk index, float offset), to scale only what is appended after it. */
+  mark(): number[] { const c = this.chunks[this.chunks.length - 1]; return [this.chunks.length - 1, c.v.length] }
+  /** Uniformly scale (by k, about the point o) every vertex appended since `m`. Normals are unchanged (uniform scale). Vertex layout: position 3, normal 3, uv 2. */
+  scaleSince(m: number[], o: V3, k: number): void {
+    for (let ci = m[0]; ci < this.chunks.length; ci++) {
+      const v = this.chunks[ci].v
+      for (let j = ci === m[0] ? m[1] : 0; j < v.length; j += 8) {
+        v[j] = o[0] + (v[j] - o[0]) * k; v[j + 1] = o[1] + (v[j + 1] - o[1]) * k; v[j + 2] = o[2] + (v[j + 2] - o[2]) * k
+      }
+    }
+  }
+
   /** One quad, corners in counter-clockwise order seen from the front: bottom-left, bottom-right, top-right, top-left. */
   quad(a: V3, b: V3, c: V3, d: V3, nx: number, ny: number, nz: number, uv: number[]): void {
     const k = this.cur(4)

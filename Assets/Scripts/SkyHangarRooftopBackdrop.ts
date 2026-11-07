@@ -5,7 +5,7 @@
 //    is rebuilt per frame. Slow effects (flicker, beacons, lamp, Time of Day) run in a single 10 Hz tick.
 //  - City: ~15 near buildings and 25 far ones, a realistic muted palette (70% neutral, 25% muted, 5% accent), facades with window grids, sills, balconies,
 //    AC boxes, fire escapes and shopfronts baked into the atlas, varied rooftops (cap, setback, tank, antenna, AC boxes), a red warning beacon on top of the antenna of some roofs; distant roofs get small modern props (stairwell core, solar rows, AC units, glass railing).
-//  - Roof: a 10 m x 10 m concrete slab, a low ledge, a thin see-through railing, stairwell + door, two AC units, a water tank, pipes, a wall lamp.
+//  - Roof: a 10 m x 10 m concrete slab, a low ledge, a thin see-through railing, stairwell + door, two AC units, a water tank, pipes, a wall lamp, three potted plants (SkyHangarPlants).
 //    Roof surfaces are opaque lit PBR materials with the large-surface luminance floor (Day 0.65, Dusk 0.55, Night 0.45) and the horizon compensation.
 // Every material is fully opaque (no blending, depth write and depth test on). Time of Day comes from SkyHangarPreviewBackdrop (0 day, 0.5 dusk, 1 night).
 // Disables itself on a real device. The city and roof are fixed in world space (only the sky dome follows the head), so walking gives normal parallax.
@@ -15,6 +15,8 @@ import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {makeObj, luminanceFloor, largeSurfaceFloor, minLuminance} from "./SkyHangarUtil"
 import {MeshBatch} from "./SkyHangarBatch"
 import {SkyHangarSkyline} from "./SkyHangarSkyline"
+import {buildPlants, PLANT_SPOTS, PLANT_SCALE} from "./SkyHangarPlants"
+import {roofLightFor, roofRimFor, ROOF_LIGHT_NIGHT} from "./SkyHangarRoofLook"
 import {dayAmount} from "./SkyHangarRouteLook"
 import {STYLES, NEUTRAL_STYLES, MUTED_STYLES, ACCENT_STYLE, FacadeAtlas, FacadeTime, facadeTimeFor, floorIsDark, darkVariant, paintAtlas, paintFlicker, variantUV, propsAtlasTexture, PROPS_UV, V_WIN, V_AC, V_BALC, V_FIRE, V_SHOP, V_L, V_R, V_T, S_WALL, S_WALLSH, S_CAP, S_METAL, S_TANK, S_AC} from "./SkyHangarFacade"
 
@@ -37,8 +39,6 @@ type RGB = [number, number, number]
 // Wall colours and glass come from SkyHangarFacade (facadeTimeFor): the night palette is the reference, the day is a gentle grade of the same colours.
 const HORIZON: RGB[] = [[0.44, 0.69, 0.95], [1.0, 0.55, 0.24], [0.45, 0.08, 0.74]] // the sky script's horizon colours
 const ATLAS_HAZE = [0.06, 0.22] // day haze of the near / far facade atlas (0 = none)
-const AMB_LEVEL = [1.0, 0.85, 0.6]
-const AMB_TINT: RGB[] = [[1.0, 0.96, 0.88], [1.0, 0.72, 0.62], [0.42, 0.52, 1.0]]
 const TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material
 const LIT_MAT = requireAsset("../SkyHangar/Materials/SH_Lit.mat") as Material
 
@@ -48,6 +48,14 @@ const RINGS = [
   {name: "B", dist: 3300, count: 9, lo: -1.5, hi: 1.0, bayDeg: 0.9, wMin: 320, wMax: 520, shop: false, base: -GROUND_DROP, full: true},
   {name: "C", dist: 4600, count: 25, lo: -2.0, hi: 2.2, bayDeg: 0.75, wMin: 0, wMax: 0, shop: false, base: -GROUND_DROP, full: false}
 ]
+
+const ANCHOR_STABLE_FRAMES = 60 // camera pose must be stable this many consecutive frames before the rooftop anchor freezes
+const ANCHOR_MIN_FRAMES = 20 // and at least this many normal-dt frames must have run
+const ANCHOR_MAX_DT = 0.25 // frames slower than this (loading hitches) are ignored
+const ANCHOR_STABLE_Y = 0.5 // cm
+const ANCHOR_STABLE_XZ = 2 // cm
+const ANCHOR_MAX_SEC = 30 // real-time safety cap
+const ANCHOR_REARM_Y = 40 // cm: a later jump of the camera y beyond this unfreezes and re-anchors
 
 @component
 export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
@@ -75,6 +83,9 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private farRoot!: SceneObject
   private roofRoot!: SceneObject
   private roofMats: {m: Material; c: RGB; rim: number}[] = []
+  private plantMats: {m: Material; c: RGB}[] = []
+  private flickerQueue: {a: FacadeAtlas; i: number; style: number}[] = []
+  private plantGain: number[] = [1, 1, 1]
   private roofBatches: {b: MeshBatch; m: Material}[] = []
   private slabMat!: Material
   private lampBulbMat!: Material
@@ -90,6 +101,14 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private todSource: any = null
   private searchFrame = 0
   private tod = 0.5
+  private anchorStart = 0
+  private anchorFrozen = false
+  private anchorFrozenY = 0
+  private anchorFrames = 0 // frames since (re)start of anchoring
+  private anchorNormal = 0 // frames with a normal frame time
+  private anchorStable = 0 // consecutive normal frames with a stable camera pose
+  private anchorLast: vec3 | null = null
+  private anchorLoggedY = 1e9
   private applied = -1
   private light = 0
   private beaconLight = 0
@@ -135,10 +154,11 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
   private build(): void {
     const kit = this.sky.partKit
     if (!kit) return
-    const cam = this.cameraObject.getTransform().getWorldPosition()
+    const cam = this.cameraObject.getTransform().getWorldPosition() // first-frame guess only: update() re-anchors every frame until the camera pose is stable
     this.sceneObject.getTransform().setWorldPosition(cam)
     this.sceneObject.getTransform().setWorldRotation(quat.quatIdentity())
     const floorY = -this.eyeHeightCm // floor 1.6 m below the eyes
+    this.resetAnchor()
 
     let seed = 7
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
@@ -154,6 +174,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       this.atlases.push(a)
       const m = opaqueTexMat(a.tex)
       m.mainPass.twoSided = true
+      try { m.mainPass.samplers.baseTex.filtering = FilteringMode.Trilinear } catch (e) { /* older runtime: bilinear */ } // mip-filtered, so thin mullions stay calm at distance
       atlasMats.push(m)
       batches.push(new MeshBatch())
     }
@@ -377,7 +398,7 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       this.roofBatches.push({b, m: this.litMat(c, rough, metal, rim)})
       return b
     }
-    // Light palette everywhere (the preview shows near-black as see-through): warm light concrete / stucco, painted metal, off-white units
+    // One shared base palette for every roof object (these albedos give the night hues: purple-grey floor, bluish walls, teal tank, steel); the light on top changes with the time of day
     const wallB = lit([0.9, 0.86, 0.78], 0.92, 0, 0), copeB = lit([1.0, 0.9, 0.74], 0.92, 0, 1), hiB = lit([1.0, 0.98, 0.94], 0.92, 0, 1.4)
     const shadowB = lit([0.6, 0.52, 0.44], 0.92, 0, 0)
     const railB = lit([0.8, 0.83, 0.87], 0.32, 0.25, 0.3)
@@ -496,12 +517,14 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     pipeB.cylinder([-300, floorY + 7, 1472], [900, floorY + 7, 1472], 7, 8, Z)
     pipeB.cylinder([sx - 170, floorY, fz - 8], [sx - 170, floorY + SH - RT, fz - 8], 6, 8, Z)
     shade(-1460, 50, 100, 1300)
+    for (const [px, pz] of PLANT_SPOTS) shade(px, pz, 110 * PLANT_SCALE, 110 * PLANT_SCALE) // potted plants (SkyHangarPlants)
 
     // build every merged mesh (one draw call each)
     for (const e of this.roofBatches) e.b.build(this.roofRoot, "RoofPart", e.m, ORDER_ROOF)
     propsB.build(this.roofRoot, "RoofProps", propsMat, ORDER_ROOF)
     bulbB.build(this.roofRoot, "LampBulb", this.lampBulbMat, ORDER_ROOF)
     indB.build(this.roofRoot, "Indicators", indMat, ORDER_ROOF)
+    buildPlants(this.roofRoot, floorY, LIT_MAT, ORDER_ROOF, (m, c) => this.plantMats.push({m, c})) // three potted large-leaf plants in the back corners and beside the right AC unit
     this.slabMat.mainPass.baseTex = slabTexture(1024, S, shadows)
 
     print("[Rooftop] camera world y=" + cam.y.toFixed(1) + " cm, roof floor world y=" + (cam.y + floorY).toFixed(1) + " cm, eye height above floor=" + (-floorY).toFixed(1) + " cm; parapet " + H + ", railing " + ROOF_RAIL + ", stairwell 270, tank 550, door 200, ladder to " + (260 + 250 + 10) + ", AC 120")
@@ -528,25 +551,69 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     this.beaconLight = smoothstep(0.25, 0.7, t)
     if (this.skyline) this.skyline.setTimeOfDay(w, this.light)
     this.sky.setDayAmount(dayAmount(w)) // the route lines and trails: amber, thicker and more opaque by day
-    const horizon = mix3(HORIZON, w)
     const big = largeSurfaceFloor(w) // Day 0.65, Dusk 0.55, Night 0.45 for large flat surfaces
-    // ambient colour taken from the sky: a gentle pull toward the horizon colour on top of the warm / cool tint
-    const level = AMB_LEVEL[0] * w[0] + AMB_LEVEL[1] * w[1] + AMB_LEVEL[2] * w[2]
-    const ambT = mix3(AMB_TINT, w)
-    const amb = [0, 1, 2].map((k) => level * (ambT[k] * 0.7 + horizon[k] * 0.3))
+    // ONE shared base palette (the albedos below = the night hues); only this light changes with the time of day: sunlight / warm dusk / cool night
+    const amb = roofLightFor(w)
+    this.plantGain = [0, 1, 2].map((k) => amb[k] / ROOF_LIGHT_NIGHT[k])
     this.fts = ATLAS_HAZE.map((h) => facadeTimeFor(w, h, getTime())) // day: a touch brighter and more desaturated, hazier with distance; hues never change
     this.ft = this.fts[0]
     this.atlases.forEach((a, i) => paintAtlas(a, this.fts[i]))
     // roof: albedo * ambient plus a warm sunset rim on the lit edges at dusk, lifted so even the shaded faces stay above the big-surface floor
     // (lit faces show roughly 0.75 of their albedo)
-    const rim = w[1] * 0.3
-    const litFloor = big / 0.62
+    const rim = roofRimFor(w) // the morning rim at every day / dusk phase (no stronger sunset rim), none at night
+    const litFloor = Math.min(big, 0.5) / 0.62
     for (const r of this.roofMats) {
       const moon = w[2] * 0.22 * r.rim // cool moonlight rim on the top edges at night
       const b = [r.c[0] * amb[0] + rim * r.rim + moon * 0.35, r.c[1] * amb[1] + rim * r.rim * 0.55 + moon * 0.6, r.c[2] * amb[2] + rim * r.rim * 0.2 + moon]
-      // the slab fills the whole view when looking down and the grid still shows through anything under ~0.5 at night: it keeps the daytime floor
+      // the slab fills the whole view when looking down and the grid still shows through anything under ~0.5 at night: it keeps its floor
       const lc = minLuminance(b, r.m === this.slabMat ? 0.65 / 0.75 : litFloor)
       r.m.mainPass.baseColor = new vec4(Math.min(0.92, lc[0]), Math.min(0.92, lc[1]), Math.min(0.92, lc[2]), 1) // the roof is the lower-half reference look: no factor
+    }
+    for (const p of this.plantMats) { // plants: the same light relative to night (night = their authored colours), normalised so it tints rather than blows out
+      const mx = Math.max(this.plantGain[0], this.plantGain[1], this.plantGain[2])
+      const g = 1 + 0.1 * w[0]
+      p.m.mainPass.baseColor = new vec4(Math.min(0.95, p.c[0] * this.plantGain[0] / mx * g), Math.min(0.95, p.c[1] * this.plantGain[1] / mx * g), Math.min(0.95, p.c[2] * this.plantGain[2] / mx * g), 1)
+    }
+  }
+
+
+  private resetAnchor(): void {
+    this.anchorStart = getTime()
+    this.anchorFrozen = false
+    this.anchorFrames = 0
+    this.anchorNormal = 0
+    this.anchorStable = 0
+    this.anchorLast = null
+  }
+
+  /** Anchors the rooftop root (and skyline baseY) to the camera every frame until the camera pose is stable, then freezes it. */
+  private updateAnchor(cam: vec3): void {
+    if (this.anchorFrozen) {
+      if (Math.abs(cam.y - this.anchorFrozenY) <= ANCHOR_REARM_Y) return
+      print("[ANCHOR] frame " + this.anchorFrames + " camera y jumped " + this.anchorFrozenY.toFixed(1) + " -> " + cam.y.toFixed(1) + ": re-anchoring")
+      this.resetAnchor()
+    }
+    this.anchorFrames++
+    this.sceneObject.getTransform().setWorldPosition(cam)
+    if (this.skyline) this.skyline.setBaseY(cam.y)
+    if (Math.abs(cam.y - this.anchorLoggedY) > 1) {
+      this.anchorLoggedY = cam.y
+      print("[ANCHOR] frame " + this.anchorFrames + " camera world y=" + cam.y.toFixed(1))
+    }
+    const dt = getDeltaTime()
+    if (dt <= ANCHOR_MAX_DT) {
+      this.anchorNormal++
+      const l = this.anchorLast
+      if (l && Math.abs(cam.y - l.y) < ANCHOR_STABLE_Y && Math.abs(cam.x - l.x) < ANCHOR_STABLE_XZ && Math.abs(cam.z - l.z) < ANCHOR_STABLE_XZ) this.anchorStable++
+      else this.anchorStable = 0
+      this.anchorLast = new vec3(cam.x, cam.y, cam.z)
+    }
+    const stable = this.anchorStable >= ANCHOR_STABLE_FRAMES && this.anchorNormal >= ANCHOR_MIN_FRAMES
+    const capped = getTime() - this.anchorStart >= ANCHOR_MAX_SEC
+    if (stable || capped) {
+      this.anchorFrozen = true
+      this.anchorFrozenY = cam.y
+      print("[ANCHOR] frame " + this.anchorFrames + " frozen (" + (stable ? "stable" : "30 s cap") + ") camera y=" + cam.y.toFixed(1) + " final floor world y=" + (cam.y - this.eyeHeightCm).toFixed(1))
     }
   }
 
@@ -557,7 +624,10 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
     }
     if (!this.built && this.sky.isBuilt()) this.build()
     if (!this.built) return
-    if (this.skyline) this.skyline.follow(this.cameraObject.getTransform().getWorldPosition()) // the skyline stays centred on the viewer (horizontally)
+    for (let n = 0; n < 2 && this.flickerQueue.length > 0; n++) { const f = this.flickerQueue.shift()!; paintFlicker(f.a, this.fts[f.i], f.style) }
+    const camNow = this.cameraObject.getTransform().getWorldPosition()
+    this.updateAnchor(camNow)
+    if (this.skyline) this.skyline.follow(camNow) // the skyline stays centred on the viewer (horizontally)
     const now = getTime()
     if (now - this.lastSlow < 0.1) return // everything below runs at most 10 times a second
     this.lastSlow = now
@@ -580,8 +650,10 @@ export class SkyHangarRooftopBackdrop extends BaseScriptComponent {
       for (let n = 0; n < 2; n++) {
         const style = this.flickerCursor
         this.flickerCursor = (this.flickerCursor + 1) % STYLES.length
-        this.atlases.forEach((a, i) => paintFlicker(a, this.fts[i], style))
+        // The repaints (about 3 ms each) are queued and done two per frame instead of all four in one frame: same cadence, no 12-18 ms hitch every tenth of a second.
+        this.atlases.forEach((a, i) => this.flickerQueue.push({a, i, style}))
       }
+      while (this.flickerQueue.length > 8) this.flickerQueue.shift() // never let a slow stretch build a backlog (the flicker is cosmetic)
     }
   }
 }
@@ -676,30 +748,67 @@ function slabTexture(N: number, size: number, shadows: number[][]): Texture {
   // a few expansion joints at uneven positions: [runs along z?, offset, phase]
   const joints: number[][] = [[1, -230 + rnd() * 60, rnd() * 6], [1, 80 + rnd() * 90, rnd() * 6], [1, 330 + rnd() * 40, rnd() * 6], [0, -150 + rnd() * 80, rnd() * 6], [0, 210 + rnd() * 70, rnd() * 6]]
   const half = ROOF_HALF
+  // Same picture as the straightforward per-pixel version, computed cheaply: everything that depends on one coordinate only is tabulated once per column / row,
+  // and a stain or contact shadow is only evaluated for the pixels inside its bounding box (outside it the original test was false anyway).
+  const X: number[] = [], Z: number[] = []
+  for (let k = 0; k < N; k++) { X.push(((k + 0.5) / N - 0.5) * size); Z.push((0.5 - (k + 0.5) / N) * size) } // texture row 0 is v 0, which is the +z edge of the plane
+  // joint tables: for a joint running along z, "along" = cz (row) and "across" = cx (column); the offset and the fade depend only on "along"
+  const jOff: number[][] = [], jFade: number[][] = []
+  for (const j of joints) {
+    const offs: number[] = [], fades: number[] = []
+    for (let k = 0; k < N; k++) {
+      const along = j[0] ? Z[k] : X[k]
+      offs.push(j[1] + 9 * Math.sin(along * 0.011 + j[2]) + 5 * Math.sin(along * 0.031 + j[2] * 2.3))
+      fades.push(1 - 0.12 * smoothstep(0.25, 0.7, 0.5 + 0.5 * Math.sin(along * 0.017 + j[2] * 3.1) * Math.sin(along * 0.0071 + j[2])))
+    }
+    jOff.push(offs); jFade.push(fades)
+  }
+  // bounding boxes (world cm) of the stains and contact shadows
+  const sBox = stains.map((st) => [st[0] - st[2], st[0] + st[2], st[1] - st[2], st[1] + st[2]])
+  const hBox = shadows.map((sh) => [sh[0] - sh[2] * 0.5 * 1.3, sh[0] + sh[2] * 0.5 * 1.3, sh[1] - sh[3] * 0.5 * 1.3, sh[1] + sh[3] * 0.5 * 1.3])
+  // the final texture-wide ripple: sin(a + b) = sin a cos b + cos a sin b, with a = cx * 0.013, b = cz * 0.009 (and the second term likewise)
+  const sa1 = X.map((x) => Math.sin(x * 0.013)), ca1 = X.map((x) => Math.cos(x * 0.013)), sb1 = Z.map((z) => Math.sin(z * 0.009)), cb1 = Z.map((z) => Math.cos(z * 0.009))
+  const sa2 = X.map((x) => Math.sin(x * 0.041)), ca2 = X.map((x) => Math.cos(x * 0.041)), sb2 = Z.map((z) => Math.sin(-z * 0.033)), cb2 = Z.map((z) => Math.cos(-z * 0.033))
+  const edgeLo = half - 130
   let i = 0
   for (let y = 0; y < N; y++) {
+    const cz = Z[y]
+    // only the stains / contact shadows whose box touches this row are tested per pixel
+    const rowStains: number[] = [], rowShadows: number[] = []
+    for (let q = 0; q < stains.length; q++) if (cz >= sBox[q][2] && cz <= sBox[q][3]) rowStains.push(q)
+    for (let q = 0; q < shadows.length; q++) if (cz >= hBox[q][2] && cz <= hBox[q][3]) rowShadows.push(q)
     for (let x = 0; x < N; x++) {
-      const cx = ((x + 0.5) / N - 0.5) * size, cz = (0.5 - (y + 0.5) / N) * size // texture row 0 is v 0, which is the +z edge of the plane
+      const cx = X[x]
       let v = 0.56 + (rnd() - 0.5) * 0.07
       if (rnd() < 0.025) v += (rnd() - 0.5) * 0.28 // gravel specks
-      for (const j of joints) {
+      for (let q = 0; q < 5; q++) {
+        const j = joints[q]
         // an uneven, wandering joint that fades in and out along its length
-        const along = j[0] ? cz : cx, across = j[0] ? cx : cz
-        const off = across - (j[1] + 9 * Math.sin(along * 0.011 + j[2]) + 5 * Math.sin(along * 0.031 + j[2] * 2.3))
-        if (Math.abs(off) < 2.2) v *= 1 - 0.12 * smoothstep(0.25, 0.7, 0.5 + 0.5 * Math.sin(along * 0.017 + j[2] * 3.1) * Math.sin(along * 0.0071 + j[2]))
+        const across = j[0] ? cx : cz
+        const idx = j[0] ? y : x
+        const off = across - jOff[q][idx]
+        if (off < 2.2 && off > -2.2) v *= jFade[q][idx]
       }
-      for (const st of stains) {
+      for (let r = 0; r < rowStains.length; r++) {
+        const q = rowStains[r]
+        const bx = sBox[q]
+        if (cx < bx[0] || cx > bx[1]) continue
+        const st = stains[q]
         const d = Math.hypot(cx - st[0], cz - st[1]) / st[2]
         if (d < 1) v *= 1 - st[3] * (1 - d * d)
       }
-      for (const sh of shadows) {
+      for (let r = 0; r < rowShadows.length; r++) {
+        const q = rowShadows[r]
+        const bx = hBox[q]
+        if (cx < bx[0] || cx > bx[1]) continue
         // soft contact shadow under a prop: [x, z, width, depth], darkest in the middle, fading out past the footprint
+        const sh = shadows[q]
         const d = Math.hypot((cx - sh[0]) / (sh[2] * 0.5), (cz - sh[1]) / (sh[3] * 0.5))
         if (d < 1.3) v *= 1 - 0.45 * (1 - smoothstep(0.5, 1.3, d))
       }
       const e = Math.max(Math.abs(cx), Math.abs(cz))
-      v *= 1 - 0.3 * smoothstep(half - 130, half, e) // darker near the parapet
-      v *= 0.96 + 0.06 * Math.sin(cx * 0.013 + cz * 0.009) + 0.03 * Math.sin(cx * 0.041 - cz * 0.033)
+      if (e > edgeLo) v *= 1 - 0.3 * smoothstep(edgeLo, half, e) // darker near the parapet
+      v *= 0.96 + 0.06 * (sa1[x] * cb1[y] + ca1[x] * sb1[y]) + 0.03 * (sa2[x] * cb2[y] + ca2[x] * sb2[y])
       const c = Math.max(0, Math.min(1, v))
       data[i++] = Math.round(c * 250); data[i++] = Math.round(c * 247); data[i++] = Math.round(c * 244)
       data[i++] = 255

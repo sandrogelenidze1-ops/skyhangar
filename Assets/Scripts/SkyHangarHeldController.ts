@@ -75,7 +75,13 @@ const HAND_OFFSET = new vec3(0, -4, -58)
 const THROW_GLIDE_SECONDS = 1.2
 const THROW_RETURN_SECONDS = 2.5
 const SKY_RETURN_SECONDS = 1.5
-const COLLECT_SECONDS = 1.2
+const COLLECT_SECONDS = 1.1
+/** Safety: icons that are open with nothing held / flying toward them are force-closed after this long. */
+const ICON_STUCK_SECONDS = 1.5
+/** Bank (roll) limit and gain for planes gliding into an icon; helicopters lean gently instead, satellites never bank. */
+const GLIDE_BANK_MAX = 0.7
+const GLIDE_BANK_GAIN = 0.22
+const HELI_TILT_RAD = 0.16
 /** Sideways reach of the U-turn control point, cm (gives a turn radius of roughly 0.6 - 1 m). */
 const TURN_WIDTH_CM = 240
 const THROW_MIN_SPEED_CM = 180
@@ -196,6 +202,11 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   private bank = 0
   private rotBlend = 0
   private fadeMats: {mat: Material; color: vec4}[] = []
+  // glide into an icon (collect / send to sky): curved path leaving along the current heading
+  private glideC1 = vec3.zero()
+  private glideHeading0 = vec3.forward()
+  private glideClock = 0 // real seconds spent in the current glide (watchdog)
+  private iconIdleT = 0 // seconds the icons have been open with no reason to be
   // inspect mode: where the model came from, and the empty-space tap being timed
   private viewOrigin: "" | "shelf" | "sky" = ""
   private emptyTap: {it: Interactor; t0: number; dir0: vec3} | null = null
@@ -227,6 +238,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   // ---------- public API ----------
   getState(): HeldState { return this.state }
   getHeldId(): string { return this.info && this.state !== "none" ? this.info.id : "" }
+  getHeldInfo(): SkyObjectInfo | null { return this.state !== "none" ? this.info : null }
   getHeldKind(): string { return this.info && this.state !== "none" ? this.info.kind : "" }
   isPadVisible(): boolean { return this.padVisible(this.hangarPad) }
   isPadGlowing(): boolean { return this.hangarPad && this.hangarPad.over && this.state === "held" }
@@ -250,6 +262,9 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   /** Start pulling an object out of the sky. interactor may be null for scripted/test pulls. */
   beginPull(info: SkyObjectInfo, fromWorld: vec3, interactor: Interactor | null): void {
     if (!this.holder) return
+    // A new pull while the last model is still gliding into an icon: land it first (never lose a collect / sky return, never leave an icon open).
+    if (this.state === "collecting") this.completeCollect()
+    else if (this.state === "returningToSky") this.completeSkyReturn()
     this.clearModel()
     this.resetHeldFlags()
     this.lastWasScripted = false
@@ -276,6 +291,12 @@ export class SkyHangarHeldController extends BaseScriptComponent {
   /** Scripted pull that ends "held" (no interactor) so tests can then release over/away from a pad. */
   beginScriptedPull(info: SkyObjectInfo, fromWorld: vec3): void {
     this.beginPull(info, fromWorld, null)
+    this.lastWasScripted = true
+  }
+
+  /** Scripted shelf pull that ends "held" (no interactor), for tests. */
+  beginScriptedInspect(info: SkyObjectInfo, fromWorld: vec3, hooks: InspectHooks): void {
+    this.beginInspect(info, fromWorld, null, hooks)
     this.lastWasScripted = true
   }
 
@@ -480,6 +501,13 @@ export class SkyHangarHeldController extends BaseScriptComponent {
 
   private setState(s: HeldState): void {
     this.state = s
+    // Icons are visible only while an aircraft is held / dragged. The moment the hold ends they close in the same frame, before any
+    // throw / return motion starts (no fade-out from full opacity). The one icon a glide flies into stays until it arrives.
+    const showing = s === "held" || (s === "flyingIn" && !this.viewOrigin)
+    if (!showing) {
+      if (s !== "collecting") this.hidePad(this.hangarPad)
+      if (s !== "returningToSky") this.hidePad(this.skyPad)
+    }
     if (this.holderCollider) this.holderCollider.enabled = s === "resting" || s === "viewing"
     if (s === "held") this.samples = []
     if (s === "viewing") {
@@ -562,9 +590,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.overShelf = false
     this.interactor = null
     this.grabPending = false
-    for (const p of [this.hangarPad, this.skyPad]) {
-      if (p) { p.over = false; p.dwell = 0 }
-    }
+    this.closeIcons(false) // every exit path (collect, sky, shelf, throw return) ends here: both icons stop hovering and fade out
     if (this.holder) this.holder.enabled = false
   }
 
@@ -581,16 +607,162 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.setState("collecting")
     this.t = 0
     this.collectPulsed = false
-    this.fromPos = this.holder.getTransform().getWorldPosition()
-    this.captureRotation()
-    this.prepareFade()
+    this.beginGlide(this.padPos(this.yawAtPull))
   }
 
   private startSkyReturn(): void {
     this.setState("returningToSky")
     this.t = 0
+    this.glideClock = 0
     this.fromPos = this.holder.getTransform().getWorldPosition()
     this.captureRotation()
+  }
+
+  /** Common start of a glide into an icon: remember where it leaves from and which way the nose points. */
+  private beginGlide(iconPos: vec3): void {
+    this.t = 0
+    this.glideClock = 0
+    this.collectPulsed = false
+    this.fromPos = this.holder.getTransform().getWorldPosition()
+    this.captureRotation()
+    this.prepareFade()
+    const toIcon = iconPos.sub(this.fromPos)
+    const dirToIcon = toIcon.length > 0.01 ? toIcon.normalize() : this.camForward()
+    // Leave along the way the model already points (nose = -Z); if it is held side-on, lean it toward the icon.
+    let nose = this.fromRot.multiplyVec3(new vec3(0, 0, -1))
+    if (nose.length < 0.01) nose = dirToIcon
+    nose = nose.normalize()
+    const v = this.releaseVelocity()
+    let h = nose.uniformScale(0.5).add(dirToIcon.uniformScale(0.5))
+    if (v.length > 40) h = h.add(v.normalize().uniformScale(0.6))
+    this.glideHeading0 = h.length > 0.01 ? h.normalize() : dirToIcon
+    this.heading = this.fromRot // eases from the hand pose into the flight, never snaps
+    this.lastDir = this.glideHeading0
+    this.bank = 0
+    this.samples = []
+  }
+
+  /**
+   * One frame of the glide into an icon. A cubic Bezier from the current spot (leaving along the current heading) to just past the icon,
+   * smootherstep speed (slow start, brief acceleration, gentle deceleration), nose along the tangent with a smoothed heading, banking in
+   * proportion to the turn rate (planes), a gentle lean (helicopters), a slow spin only (satellites), shrinking and fading over the last 40 %.
+   * Returns true on the last frame.
+   */
+  private glideStep(visual: SceneObject | null, ht: Transform, icon: vec3, secs: number, dt: number, shrinkTo: number): boolean {
+    this.t += dt / secs
+    this.glideClock += dt
+    const tt = clamp01(this.t)
+    const k = tt * tt * tt * (tt * (tt * 6 - 15) + 10)
+    const cam = this.camPos()
+    const away = icon.sub(cam).length > 0.01 ? icon.sub(cam).normalize() : this.camForward()
+    const end = icon.add(away.uniformScale(2)) // just past the icon
+    const span = end.sub(this.fromPos)
+    const len = Math.max(8, span.length)
+    const c1 = this.fromPos.add(this.glideHeading0.uniformScale(len * 0.4))
+    const c2 = end.sub(away.uniformScale(len * 0.3))
+    const u = 1 - k
+    const p = bezier3(this.fromPos, c1, c2, end, k)
+    const tan = c1.sub(this.fromPos).uniformScale(3 * u * u)
+      .add(c2.sub(c1).uniformScale(6 * u * k))
+      .add(end.sub(c2).uniformScale(3 * k * k))
+    ht.setWorldPosition(p)
+    const g = clamp01((tt - 0.6) / 0.4)
+    const gs = g * g * (3 - 2 * g)
+    if (visual) {
+      const sc = Math.max(0.01, 1 - (1 - shrinkTo) * gs)
+      visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
+      const kind = this.info ? this.info.kind : "plane"
+      if (kind === "satellite") {
+        visual.getTransform().setWorldRotation(quat.angleAxis(2.5 * tt * tt, vec3.up()).multiply(this.fromRot)) // smooth glide, no banking
+      } else if (tan.length > 0.01) {
+        const d = tan.normalize()
+        const turn = Math.atan2(this.lastDir.x * d.z - this.lastDir.z * d.x, this.lastDir.x * d.x + this.lastDir.z * d.z)
+        const yawRate = dt > 0 ? turn / dt : 0
+        this.lastDir = d
+        const heli = kind === "helicopter"
+        this.heading = quat.slerp(this.heading, faceDir(d), clamp01(dt * (heli ? 4 : 6)))
+        const pitch = heli ? -HELI_TILT_RAD * Math.sin(Math.PI * tt) : 0.25 * Math.asin(Math.max(-1, Math.min(1, d.y))) // slight pitch toward the target
+        let rot = this.heading.multiply(quat.angleAxis(pitch, vec3.right()))
+        if (!heli) {
+          const bankTarget = Math.max(-GLIDE_BANK_MAX, Math.min(GLIDE_BANK_MAX, -yawRate * GLIDE_BANK_GAIN))
+          this.bank += (bankTarget - this.bank) * clamp01(dt * 5)
+          rot = rot.multiply(quat.angleAxis(this.bank, new vec3(0, 0, 1)))
+        }
+        visual.getTransform().setWorldRotation(rot)
+      }
+    }
+    this.setFade(1 - gs)
+    return this.t >= 1
+  }
+
+  private completeCollect(): void {
+    const info = this.info
+    this.hangarPad.over = false
+    this.clearModel()
+    if (info) this._onCollected.invoke(info)
+  }
+
+  private completeSkyReturn(): void {
+    const info = this.info
+    this.skyPad.over = false
+    const hooks = this.inspect
+    this.clearModel()
+    if (info) {
+      this.sky.flashMarker(info.id)
+      this._onSentToSky.invoke(info)
+    }
+    if (hooks) hooks.onSentToSky()
+  }
+
+  private hidePad(p: Pad | undefined): void {
+    if (!p) return
+    p.over = false
+    p.dwell = 0
+    p.alpha = 0
+    p.glow = 0
+    p.pulse = -1
+    p.root.enabled = false
+  }
+
+  /** Close both icons: nothing hovered, nothing glowing. hard = also hide them at once (safety reset). */
+  private closeIcons(hard: boolean): void {
+    for (const p of [this.hangarPad, this.skyPad]) {
+      if (!p) continue
+      p.over = false
+      p.dwell = 0
+      if (hard) {
+        p.alpha = 0
+        p.glow = 0
+        p.pulse = -1
+        p.root.enabled = false
+      }
+    }
+    this.iconIdleT = 0
+  }
+
+  /**
+   * Mode change (Sky / Radar / Hangar): nothing stays in the hand and the icons close. A glide in progress is completed
+   * (so a collected model is never lost); a shelf model goes back to its slot; a sky model stays in the sky.
+   */
+  resetForModeChange(): void {
+    if (this.state === "collecting") this.completeCollect()
+    else if (this.state === "returningToSky") this.completeSkyReturn()
+    else if (this.state !== "none") {
+      const hooks = this.inspect
+      this.clearModel()
+      if (hooks) hooks.onReturned()
+    }
+    this.closeIcons(true)
+  }
+
+  /** Test hook: force both icons open as if a bug left them stuck (the safety timeout must close them). */
+  debugForceIconsOpen(): void {
+    for (const p of [this.hangarPad, this.skyPad]) {
+      if (!p) continue
+      p.alpha = 1
+      p.root.enabled = true
+    }
+    this.iconIdleT = 0
   }
 
   private captureRotation(): void {
@@ -707,10 +879,42 @@ export class SkyHangarHeldController extends BaseScriptComponent {
     this.updatePad(this.hangarPad, hPos, faceEyes(hPos), (holding && (!this.inspect || this.viewOrigin === "shelf")) || this.state === "collecting", dt)
     this.updatePad(this.skyPad, sPos, faceEyes(sPos), holding || this.state === "returningToSky", dt)
 
+    this.watchIcons(dt)
     if (this.state === "none") return
     if (this.model) spinRotors(this.model, dt, this.state === "thrown" || this.state === "returning" ? 4 : 2.2)
     const visual = this.model ? this.model.root.getParent() : null
 
+    try {
+      this.runState(visual, ht, dt, yaw)
+    } catch (e) {
+      // An error mid-animation must never leave the state (and so the icons) stuck: finish the transition now.
+      print("SkyHangarHeldController: " + e)
+      this.recoverFromError()
+    }
+  }
+
+  /** Safety nets: a glide that overruns, and icons that are open with nothing held or flying toward them. */
+  private watchIcons(dt: number): void {
+    const flying = this.state === "collecting" || this.state === "returningToSky"
+    if (flying && this.glideClock > Math.max(COLLECT_SECONDS, this.skyReturnSeconds) + ICON_STUCK_SECONDS) this.recoverFromError()
+    const holding = this.state === "held" || this.state === "flyingIn"
+    const open = (this.hangarPad && this.hangarPad.root.enabled) || (this.skyPad && this.skyPad.root.enabled)
+    if (holding || flying || !open) {
+      this.iconIdleT = 0
+      return
+    }
+    this.iconIdleT += dt
+    if (this.iconIdleT >= ICON_STUCK_SECONDS) this.closeIcons(true)
+  }
+
+  private recoverFromError(): void {
+    if (this.state === "collecting") this.completeCollect()
+    else if (this.state === "returningToSky") this.completeSkyReturn()
+    else if (this.state !== "none") this.clearModel()
+    this.closeIcons(this.state === "none")
+  }
+
+  private runState(visual: SceneObject | null, ht: Transform, dt: number, yaw: number): void {
     switch (this.state) {
       case "flyingIn": {
         this.t += dt / this.flyInSeconds
@@ -771,50 +975,22 @@ export class SkyHangarHeldController extends BaseScriptComponent {
         break
       }
       case "collecting": {
-        // ~1.2 s: gentle curve to the hangar icon (ease-in-out), nose toward it; shrink + fade only in the last third.
-        this.t += dt / COLLECT_SECONDS
-        const tt = clamp01(this.t)
-        const k = easeInOut(tt)
-        const padP = this.padPos(yaw)
-        const through = padP.add(padP.sub(cam).normalize().uniformScale(2)) // just past the icon
-        const span = through.sub(this.fromPos)
-        const bendSide = vec3.up().cross(span.length > 0.01 ? span.normalize() : vec3.forward())
-        const bend = bendSide.length > 0.01 ? bendSide.normalize().uniformScale(span.length * 0.18) : vec3.zero()
-        const c1 = this.fromPos.add(span.uniformScale(0.3)).add(bend)
-        const c2 = this.fromPos.add(span.uniformScale(0.7)).add(bend.uniformScale(0.5))
-        const p = bezier3(this.fromPos, c1, c2, through, k)
-        ht.setWorldPosition(p)
-        if (visual) {
-          const g = easeInOut(clamp01((tt - 2 / 3) * 3))
-          const sc = Math.max(0.01, 1 - g)
-          visual.getTransform().setLocalScale(new vec3(sc, sc, sc))
-          if (this.info && this.info.kind === "satellite") {
-            visual.getTransform().setWorldRotation(quat.angleAxis(3 * tt * tt, vec3.up()).multiply(this.fromRot))
-          } else {
-            const ahead = bezier3(this.fromPos, c1, c2, through, Math.min(1, k + 0.03))
-            const dir = ahead.sub(p).length > 0.01 ? ahead.sub(p) : span
-            if (dir.length > 0.01) visual.getTransform().setWorldRotation(quat.slerp(this.fromRot, faceDir(dir), easeInOut(clamp01(tt / 0.35))))
-          }
-          this.setFade(1 - g)
-        }
-        if (tt >= 0.8 && !this.collectPulsed) {
+        // ~1.1 s glide into the Hangar icon (see glideStep); the icon pulses as it arrives.
+        const done = this.glideStep(visual, ht, this.padPos(yaw), COLLECT_SECONDS, dt, 0)
+        if (this.t >= 0.8 && !this.collectPulsed) {
           this.collectPulsed = true
           this.hangarPad.pulse = 0
         }
-        if (this.t >= 1) {
-          const info = this.info
-          this.hangarPad.over = false
-          this.clearModel()
-          if (info) this._onCollected.invoke(info)
-        }
+        if (done) this.completeCollect()
         break
       }
       case "returningToSky": {
+        // Original send-to-sky motion (not the Hangar glide): rise first, then glide home along the sky.
         this.t += dt / this.skyReturnSeconds
+        this.glideClock += dt
         const k = easeInOut(this.t)
         const info = this.info
         const home = (info ? this.sky.getMarkerWorldPos(info.id) : null) ?? this.fromPos.add(new vec3(0, 300, -300))
-        // Rise first, then glide home along the sky (back the way it came down).
         const lift = this.fromPos.add(new vec3(0, 60, 0))
         const p = bezier3(this.fromPos, lift, vec3.lerp(lift, home, 0.6), home, k)
         const ahead = bezier3(this.fromPos, lift, vec3.lerp(lift, home, 0.6), home, Math.min(1, k + 0.02))
@@ -825,16 +1001,7 @@ export class SkyHangarHeldController extends BaseScriptComponent {
           const vel = ahead.sub(p)
           if (vel.length > 0.01) visual.getTransform().setWorldRotation(quat.slerp(this.fromRot, faceDir(vel), easeOutCubic(clamp01(k / 0.25))))
         }
-        if (this.t >= 1) {
-          this.skyPad.over = false
-          const hooks = this.inspect
-          this.clearModel()
-          if (info) {
-            this.sky.flashMarker(info.id)
-            this._onSentToSky.invoke(info)
-          }
-          if (hooks) hooks.onSentToSky()
-        }
+        if (this.t >= 1) this.completeSkyReturn()
         break
       }
       case "returningToShelf": {

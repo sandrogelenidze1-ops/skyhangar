@@ -22,6 +22,10 @@ interface Tag {
   shown: number
 }
 
+const PAGE_DOT = new vec4(0x2f / 255, 0x80 / 255, 1, 1) // #2F80FF neon blue, opaque
+const PAGE_DOT_ACTIVE = new vec4(0x4d / 255, 0xa3 / 255, 1, 1) // #4DA3FF brighter, for the current page
+const PAGE_DOT_RIM = new vec4(1, 1, 1, 1) // thin white rim on every dot
+
 @component
 export class SkyHangarShelfUI extends BaseScriptComponent {
   @ui.label('<span style="color: #60A5FA;">SkyHangarShelfUI – glass plaques + paging controls</span>')
@@ -312,15 +316,16 @@ export class SkyHangarShelfUI extends BaseScriptComponent {
       if (i >= pageCount) { t.setLocalScale(vec3.zero()); continue }
       t.setLocalScale(vec3.one())
       t.setLocalPosition(new vec3((i - (pageCount - 1) / 2) * pitch, 0, 0))
-      r.size = new vec2(dia, dia)
-      r.cornerRadius = dia / 2
       const on = i === page
-      r.backgroundColor = on ? PALETTE.accent : new vec4(PALETTE.accent.x, PALETTE.accent.y, PALETTE.accent.z, 0)
-      r.border = !on
-      if (!on) {
-        r.borderSize = 0.07
-        r.borderColor = PALETTE.accent
-      }
+      const d = on ? dia * 1.3 : dia // the current page's dot is a little bigger
+      r.size = new vec2(d, d)
+      r.cornerRadius = d / 2
+      // Neon blue, fully opaque, the same at every time of day: #2F80FF for the other pages, brighter #4DA3FF for the current one. Blue on the blue sky / glass is only
+      // about 1.1-1.2:1 by luminance, so every dot also carries a thin white rim (white vs #2F80FF is about 3.9:1) to stay clearly visible day, dusk and night.
+      r.backgroundColor = on ? PAGE_DOT_ACTIVE : PAGE_DOT
+      r.border = true
+      r.borderSize = 0.09
+      r.borderColor = PAGE_DOT_RIM
     }
   }
 

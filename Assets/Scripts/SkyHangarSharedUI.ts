@@ -74,7 +74,7 @@ export const TRAIL = {
   widthMm: 2.5,
   peakBehind: 0.9,
   peakAhead: 0.8,
-  gapFromGlyphCm: 5, // the line starts just outside the sky glyph
+  gapFromGlyphCm: 1.5, // small gap between the tail of the glyph (half its drawn length from its centre) and the start of the line
   levels: 32, // alpha steps (shared materials) along the gradient
 }
 export const MARK = {

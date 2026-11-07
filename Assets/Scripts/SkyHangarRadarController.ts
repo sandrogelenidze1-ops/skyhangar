@@ -12,6 +12,7 @@ import {SkyHangarSkyController} from "./SkyHangarSkyController"
 import {PartKit, makeObj, yawOf, yawOffset, yawRotation, DEG} from "./SkyHangarUtil"
 import {buildGlyph, BuiltGlyph, setGlyphBrightness, spinGlyphRotor} from "./SkyHangarGlyphs"
 import {latheMesh, ringMesh, MESH_BOUNDS} from "./SkyHangarMeshes"
+import {routeColor, edgeFade} from "./SkyHangarRouteLook"
 
 const RING_MIN_SEGMENTS = 96 // smooth circles
 const KT_TO_KM_S = 1.852 / 3600
@@ -20,7 +21,8 @@ const TRAIL_HEAD_W = 0.2 // ribbon width at the icon / at the tail, cm
 const TRAIL_TAIL_W = 0.08
 const TRAIL_HEAD_ALPHA = 0.7
 const TRAIL_Y = 0.45
-const TRAIL_RGB = new vec4(0, 1, 1, 1) // cyan, distinct from the white plane icons
+const NOSE_CM = 1.2 // the nose sits this far ahead of the icon centre (the icon is ~2.4 cm long)
+const TRAIL_SPAN = 1.7 // the trail mesh covers this many radii each way, so an aircraft fading out beyond the circle is never culled
 const TRAIL_TEX_MAT = requireAsset("../SkyHangar/Materials/SH_SkyTex.mat") as Material // the textured unlit material (the plain unlit shader has no vertex colour)
 const TRAIL_ORDER = 0 // the trails keep the disc's order; the plane icons are lifted above it
 const ICON_ORDER = 1
@@ -36,6 +38,14 @@ interface Blip {
   northKm: number
   base: vec4
   hovered: boolean
+  fade: number // 1 inside the circle .. 0 once its nose is EDGE_FADE of the radius beyond it (icon and trail fade together)
+}
+
+/** The contrails of one vehicle type: one dynamic mesh and one material (the type's route colour, same as its sky line and dots). */
+interface TrailGroup {
+  blips: Blip[]
+  builder: MeshBuilder
+  data: number[]
 }
 
 @component
@@ -98,6 +108,8 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private blips: Blip[] = []
   private sweep!: SceneObject
   private sweepAngle = 0
+  private tickAcc = 0 // time accumulated for the 20 Hz blip / trail tick
+  private tickN = 0
   private built = false
   private yawAtOpen = 0
   private sweepMats: Material[] = []
@@ -106,8 +118,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
   private lastDim = 1
   private discBasePos = vec3.zero()
   private dimMats: {m: Material; a: number}[] = []
-  private trailBuilder: MeshBuilder | null = null
-  private trailData: number[] = []
+  private trailGroups: TrailGroup[] = []
   private trailFailed = false
   private _onBlipTap = new Event<SkyObjectInfo>()
   get onBlipTap(): PublicApi<SkyObjectInfo> { return this._onBlipTap.publicApi() }
@@ -207,7 +218,7 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       const visual = makeObj(obj, "BlipVisual")
       visual.getTransform().setLocalPosition(new vec3(0, 0.5, 0))
       const glyph = buildGlyph(this.sky.partKit, visual, "Glyph", info.kind, info.kind === "satellite" ? 2.0 : 2.4, base)
-      const b: Blip = {info, obj, glyph, visual, angle: 0, eastKm: 0, northKm: 0, base, hovered: false}
+      const b: Blip = {info, obj, glyph, visual, angle: 0, eastKm: 0, northKm: 0, base, hovered: false, fade: 1}
       it.onHoverEnter.add(() => (b.hovered = true))
       it.onHoverExit.add(() => (b.hovered = false))
       it.onTriggerEnd.add(() => this._onBlipTap.invoke(info))
@@ -224,28 +235,8 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     this.built = true
   }
 
-  /** One dynamic mesh (4 vertices per blip, vertex-colour gradient) and one material for every contrail. */
+  /** One dynamic mesh (4 vertices per blip) and one material per vehicle type; the colour is the type's route colour (plane green, helicopter yellow, satellite blue). */
   private buildTrails(kit: PartKit): void {
-    const n = this.blips.length
-    const b = new MeshBuilder([
-      {name: "position", components: 3},
-      {name: "normal", components: 3, normalized: true},
-      {name: "texture0", components: 2},
-      {name: "color", components: 4}
-    ])
-    b.topology = MeshTopology.Triangles
-    b.indexType = MeshIndexType.UInt16
-    const idx: number[] = []
-    for (let i = 0; i < n; i++) {
-      const v = i * 4
-      idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2)
-    }
-    this.trailData = new Array(n * 4 * TRAIL_STRIDE).fill(0)
-    for (let i = 0; i < n * 4; i++) this.trailData[i * TRAIL_STRIDE + 4] = 1 // normal +Y
-    b.appendVerticesInterleaved(this.trailData)
-    b.appendIndices(idx)
-    b.updateMesh()
-    this.trailBuilder = b
     const R = this.diameterCm / 2
     const W = 64, H = 2
     const tex = ProceduralTextureProvider.createWithFormat(W, H, TextureFormat.RGBA8Unorm)
@@ -256,14 +247,42 @@ export class SkyHangarRadarController extends BaseScriptComponent {
       px[k + 3] = Math.round(255 * (1 - x / (W - 1))) // u = 0 at the icon (opaque) -> u = 1 at the tail (clear)
     }
     ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, px)
-    const mat = TRAIL_TEX_MAT.clone()
-    mat.mainPass.baseTex = tex
-    mat.mainPass.baseColor = new vec4(TRAIL_RGB.x, TRAIL_RGB.y, TRAIL_RGB.z, TRAIL_HEAD_ALPHA)
-    mat.mainPass.depthWrite = false
-    const mesh = b.getMesh()
-    MESH_BOUNDS.set(mesh, {min: new vec3(-R, TRAIL_Y - 0.5, -R), max: new vec3(R, TRAIL_Y + 0.5, R)})
-    const holder = kit.part(this.discRoot, "RadarTrails", mesh, mat, new vec3(0, TRAIL_Y, 0), new vec3(R * 2, 1, R * 2))
-    this.setOrderTree(holder, TRAIL_ORDER)
+    const root = makeObj(this.discRoot, "RadarTrails")
+    const kinds: string[] = []
+    for (const bl of this.blips) if (kinds.indexOf(bl.info.kind) < 0) kinds.push(bl.info.kind)
+    for (const kind of kinds) {
+      const blips = this.blips.filter((bl) => bl.info.kind === kind)
+      const n = blips.length
+      const b = new MeshBuilder([
+        {name: "position", components: 3},
+        {name: "normal", components: 3, normalized: true},
+        {name: "texture0", components: 2},
+        {name: "color", components: 4}
+      ])
+      b.topology = MeshTopology.Triangles
+      b.indexType = MeshIndexType.UInt16
+      const idx: number[] = []
+      for (let i = 0; i < n; i++) {
+        const v = i * 4
+        idx.push(v, v + 1, v + 2, v + 1, v + 3, v + 2)
+      }
+      const data = new Array(n * 4 * TRAIL_STRIDE).fill(0)
+      for (let i = 0; i < n * 4; i++) data[i * TRAIL_STRIDE + 4] = 1 // normal +Y
+      b.appendVerticesInterleaved(data)
+      b.appendIndices(idx)
+      b.updateMesh()
+      const c = routeColor(kind)
+      const mat = TRAIL_TEX_MAT.clone()
+      mat.mainPass.baseTex = tex
+      mat.mainPass.baseColor = new vec4(c[0], c[1], c[2], TRAIL_HEAD_ALPHA)
+      mat.mainPass.depthWrite = false
+      const mesh = b.getMesh()
+      const B = R * TRAIL_SPAN
+      MESH_BOUNDS.set(mesh, {min: new vec3(-B, TRAIL_Y - 0.5, -B), max: new vec3(B, TRAIL_Y + 0.5, B)})
+      kit.part(root, "Trails_" + kind, mesh, mat, new vec3(0, TRAIL_Y, 0), new vec3(B * 2, 1, B * 2))
+      this.trailGroups.push({blips, builder: b, data})
+    }
+    this.setOrderTree(root, TRAIL_ORDER)
     for (const bl of this.blips) this.setOrderTree(bl.visual, ICON_ORDER) // icons draw after (over) the trails
   }
 
@@ -272,51 +291,49 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     for (let i = 0; i < o.getChildrenCount(); i++) this.setOrderTree(o.getChild(i), order)
   }
 
-  /** Rewrites every contrail quad (head at the icon, tail backward along the heading) and uploads once. */
+  /** Rewrites every contrail quad (head at the icon, tail backward along the heading) and uploads once per type. A trail is never clipped to the circle; it fades with its aircraft. */
   private writeTrails(): void {
-    const b = this.trailBuilder
-    if (!b) return
+    if (this.trailFailed) return
     const R = this.diameterCm / 2
-    const d = this.trailData
-    for (let i = 0; i < this.blips.length; i++) {
-      const bl = this.blips[i]
-      const trk = bl.info.trackDeg * DEG - this.yawAtOpen
-      const dx = Math.sin(trk), dz = -Math.cos(trk)
-      const p = bl.obj.getTransform().getLocalPosition()
-      const speed = Math.max(0, Math.min(1, (bl.info.speedKt - 80) / 420))
-      let len = R * TRAIL_LEN_FRAC * (0.6 + 0.8 * speed)
-      const pd = p.x * dx + p.z * dz
-      const lim = R * 0.99
-      const disc = pd * pd - (p.x * p.x + p.z * p.z) + lim * lim
-      len = disc > 0 ? Math.min(len, pd + Math.sqrt(disc)) : 0
-      if (len < 0.01) len = 0
-      const hx = p.x, hz = p.z
-      const tx = p.x - dx * len, tz = p.z - dz * len
-      const px = -dz, pz = dx // perpendicular in the disc plane
-      const hw = len > 0 ? TRAIL_HEAD_W / 2 : 0
-      const tw = len > 0 ? TRAIL_TAIL_W / 2 : 0
-      const k = i * 4 * TRAIL_STRIDE
-      for (let v = 0; v < 4; v++) {
-        const o = k + v * TRAIL_STRIDE
-        const head = v < 2
-        const side = v % 2 === 0 ? 1 : -1
-        const w = head ? hw : tw
-        d[o] = (head ? hx : tx) + px * w * side
-        d[o + 1] = TRAIL_Y
-        d[o + 2] = (head ? hz : tz) + pz * w * side
-        d[o + 6] = head ? 0 : 1 // u: 0 at the icon, 1 at the tail (the texture alpha runs 1 -> 0)
-        d[o + 7] = v % 2
+    for (const g of this.trailGroups) {
+      const d = g.data
+      for (let i = 0; i < g.blips.length; i++) {
+        const bl = g.blips[i]
+        const trk = bl.info.trackDeg * DEG - this.yawAtOpen
+        const dx = Math.sin(trk), dz = -Math.cos(trk)
+        const p = bl.obj.getTransform().getLocalPosition()
+        const speed = Math.max(0, Math.min(1, (bl.info.speedKt - 80) / 420))
+        let len = R * TRAIL_LEN_FRAC * (0.6 + 0.8 * speed)
+        if (bl.fade < 0.003) len = 0 // fully faded out: hidden
+        const hx = p.x, hz = p.z
+        const tx = p.x - dx * len, tz = p.z - dz * len
+        const px = -dz, pz = dx // perpendicular in the disc plane
+        const hw = len > 0 ? TRAIL_HEAD_W / 2 : 0
+        const tw = len > 0 ? TRAIL_TAIL_W / 2 : 0
+        const uHead = 1 - bl.fade // the texture alpha is 1 - u, so starting at u = 1 - fade gives the head an opacity of `fade` (the tail stays clear)
+        const k = i * 4 * TRAIL_STRIDE
+        for (let v = 0; v < 4; v++) {
+          const o = k + v * TRAIL_STRIDE
+          const head = v < 2
+          const side = v % 2 === 0 ? 1 : -1
+          const w = head ? hw : tw
+          d[o] = (head ? hx : tx) + px * w * side
+          d[o + 1] = TRAIL_Y
+          d[o + 2] = (head ? hz : tz) + pz * w * side
+          d[o + 6] = head ? uHead : 1
+          d[o + 7] = v % 2
+        }
       }
-    }
-    // setVertexInterleaved writes ONE vertex (12 floats), so upload per vertex
-    try {
-      const n = this.blips.length * 4
-      for (let v = 0; v < n; v++) b.setVertexInterleaved(v, d.slice(v * TRAIL_STRIDE, (v + 1) * TRAIL_STRIDE))
-      b.updateMesh()
-    } catch (e) {
-      if (!this.trailFailed) print("Radar trails disabled: " + e)
-      this.trailFailed = true
-      this.trailBuilder = null
+      // setVertexInterleaved writes ONE vertex (12 floats), so upload per vertex
+      try {
+        const n = g.blips.length * 4
+        for (let v = 0; v < n; v++) g.builder.setVertexInterleaved(v, d.slice(v * TRAIL_STRIDE, (v + 1) * TRAIL_STRIDE))
+        g.builder.updateMesh()
+      } catch (e) {
+        if (!this.trailFailed) print("Radar trails disabled: " + e)
+        this.trailFailed = true
+        return
+      }
     }
   }
 
@@ -357,8 +374,18 @@ export class SkyHangarRadarController extends BaseScriptComponent {
     const dist = Math.hypot(b.eastKm, b.northKm)
     const rel = Math.atan2(b.eastKm, b.northKm) - this.yawAtOpen
     b.angle = rel
-    const frac = Math.min(0.97, dist / this.rangeKm)
-    b.obj.getTransform().setLocalPosition(new vec3(Math.sin(rel) * R * frac, 0, -Math.cos(rel) * R * frac))
+    const frac = dist / this.rangeKm // no clamping: past the circle an aircraft fades out and is hidden, and fades back in when it returns
+    const x = Math.sin(rel) * R * frac, z = -Math.cos(rel) * R * frac
+    b.obj.getTransform().setLocalPosition(new vec3(x, 0, z))
+    // fade by the position of the NOSE: full while it is inside the circle, gone EDGE_FADE of the radius beyond it (smoothstep, so it is slow and gentle)
+    const trk = b.info.trackDeg * DEG - this.yawAtOpen
+    const nose = Math.hypot(x + Math.sin(trk) * NOSE_CM, z - Math.cos(trk) * NOSE_CM)
+    b.fade = edgeFade(nose, R)
+    const on = b.fade > 0.003
+    if (b.obj.enabled !== on) {
+      b.obj.enabled = on
+      if (!on) b.hovered = false
+    }
   }
 
   /** Real motion: each aircraft advances at its recorded ground speed along its recorded heading; a gradient contrail streams behind each icon. */
@@ -394,23 +421,30 @@ export class SkyHangarRadarController extends BaseScriptComponent {
         d.m.mainPass.baseColor = new vec4(c.x, c.y, c.z, d.a * dim)
       }
     }
-    this.moveBlips(dt)
     this.sweepAngle = (this.sweepAngle + (dt / this.sweepSeconds) * Math.PI * 2) % (Math.PI * 2)
     this.sweep.getTransform().setLocalRotation(quat.angleAxis(-this.sweepAngle, vec3.up()))
+    // Blip motion (a few km per minute), the contrail mesh upload (every vertex rewritten) and the per-blip glow / material work run at 20 Hz: invisible difference, about a third of the cost.
+    this.tickAcc += dt
+    if (++this.tickN % 3 !== 0) return
+    const tdt = this.tickAcc
+    this.tickAcc = 0
+    this.moveBlips(tdt)
     for (const b of this.blips) {
       // Brighten as the sweep passes, then decay
       let a = ((this.sweepAngle - (((b.angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2))) + Math.PI * 2) % (Math.PI * 2)
       const glow = Math.max(0, 1 - a / 2.2)
+      if (b.fade <= 0.003) continue // outside the radar: hidden
       const k = b.hovered ? 1 : 0.25 + 0.75 * glow
       b.obj.getTransform().setLocalScale(b.hovered ? new vec3(1.5, 1.5, 1.5) : vec3.one())
       setGlyphBrightness(b.glyph, b.base, k)
-      if (dim < 0.999) {
+      const am = dim * b.fade
+      if (am < 0.999) {
         for (const m of b.glyph.materials) {
           const c = m.mainPass.baseColor
-          m.mainPass.baseColor = new vec4(c.x, c.y, c.z, c.w * dim)
+          m.mainPass.baseColor = new vec4(c.x, c.y, c.z, c.w * am)
         }
       }
-      if (b.info.kind === "helicopter") spinGlyphRotor(b.glyph, dt, 0.8)
+      if (b.info.kind === "helicopter") spinGlyphRotor(b.glyph, tdt, 0.8)
     }
   }
 }

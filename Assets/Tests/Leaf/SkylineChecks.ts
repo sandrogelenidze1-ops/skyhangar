@@ -173,8 +173,8 @@ export function runSkylineChecks(c: Check, print: (s: string) => void): void {
   const shownDay = avg.map((v) => 80 + (175 * v) / 255)
   const lumOf = (v: number[]): number => 0.3 * v[0] + 0.4 * v[1] + 0.3 * v[2]
   const ratio = lumOf(shownDay) / lumOf(DAY_SKY_SHOWN)
-  c.check("day: the towers are a few steps darker than the horizon sky (80-92% of its brightness), readable against it", "inspection", ratio >= 0.8 && ratio <= 0.92, `${(ratio * 100).toFixed(0)}% (shown ~${shownDay.map(Math.round).join(", ")} vs sky ${DAY_SKY_SHOWN.join(", ")})`)
-  c.check("day: soft blue-grey, desaturated (less saturated than the sky, B > G > R, not violet)", "inspection", sat(shownDay) < sat(DAY_SKY_SHOWN) && shownDay[2] > shownDay[1] && shownDay[1] > shownDay[0] && shownDay[0] > 100, `sat ${sat(shownDay).toFixed(2)} vs sky ${sat(DAY_SKY_SHOWN).toFixed(2)}`)
+  c.check("day: the towers are flat, clearly darker than the horizon sky (55-68% of its brightness), readable against it, not black", "inspection", ratio >= 0.55 && ratio <= 0.68 && lumOf(shownDay) > 100, `${(ratio * 100).toFixed(0)}% (shown ~${shownDay.map(Math.round).join(", ")} vs sky ${DAY_SKY_SHOWN.join(", ")})`)
+  c.check("day: soft blue-grey, desaturated (less saturated than the sky, B > G > R, not violet)", "inspection", sat(shownDay) < sat(DAY_SKY_SHOWN) && shownDay[2] > shownDay[1] && shownDay[1] > shownDay[0] && shownDay[0] > 85, `sat ${sat(shownDay).toFixed(2)} vs sky ${sat(DAY_SKY_SHOWN).toFixed(2)}`)
   const meanTop = dayAlphaTop.reduce((a, v) => a + v, 0) / Math.max(1, dayAlphaTop.length), meanBot = dayAlphaBottom.reduce((a, v) => a + v, 0) / Math.max(1, dayAlphaBottom.length)
   c.check("day: gradient fade toward the bottom (much more transparent near the horizon)", "inspection", meanBot < meanTop * 0.55 && meanTop > 200, `top alpha ${meanTop.toFixed(0)}, bottom ${meanBot.toFixed(0)}`)
   let dayLit = 0

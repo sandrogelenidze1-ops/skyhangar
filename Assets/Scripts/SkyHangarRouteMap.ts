@@ -1,11 +1,12 @@
 // SkyHangarRouteMap.ts
-// Owns: the simple custom map on the info card's Route tab. Coastline outlines only (thin white lines, no filled
+// Owns: the map on the info card's Route tab. Land outlines only (thin white lines, no filled
 // land) from Assets/Data/coastline.json (Natural Earth 110m, public domain, simplified; bundled, nothing is fetched),
 // the route as an arc between the two airports with their codes, and the vehicle as a dot that moves.
 // Planes: great-circle arc origin -> destination. Satellites: the ground track for one orbit around now (propagated
 // from the TLE with the same two-body model that produced the recorded sub-points). Helicopters: only the path
 // already flown (dead-reckoned back along the recorded heading and speed; the recording has no geographic history).
-// The map fits the track bounds with a margin. Lines are batched into three meshes (coast, arc ahead, arc flown).
+// Helicopter view: a local basemap from Assets/Data/heli_basemap.json (OpenStreetMap, ODbL; credit is in README / DISCLOSURES) under the
+// recorded track; one extract per recorded helicopter area. // The map fits the track bounds with a margin. Lines are batched into three meshes (coast, arc ahead, arc flown).
 // Plain module, no component. buildTrack() is pure; RouteMap owns the scene objects.
 
 import {RoundedRectangle} from "SpectaclesUIKit.lspkg/Scripts/Visuals/RoundedRectangle/RoundedRectangle"
@@ -13,7 +14,8 @@ import {AIRPORTS, SNAPSHOT_UTC, SkyObjectInfo} from "./SkyHangarFlightData"
 import {fontFor, PALETTE, TEXT, obj, roleSize} from "./SkyHangarSharedUI"
 import {heliTrack} from "./SkyHangarRouteGeo"
 
-const COAST = requireAsset("../Data/coastline.json") as JsonAsset
+const COAST = requireAsset("../Data/coastline.json") as JsonAsset // Natural Earth 110m land outlines (public domain)
+const BASEMAP = requireAsset("../Data/heli_basemap.json") as JsonAsset // OpenStreetMap extracts (ODbL), one per helicopter area
 const D2R = Math.PI / 180
 const MINT = new vec4(0.498, 0.89, 0.69, 1) // helicopter trail colour (same as the sky)
 const INK = new vec4(0.07, 0.1, 0.13, 1)
@@ -29,7 +31,7 @@ export interface MapTrack {
   originCode: string
   destCode: string
   /** Helicopters: pts are east / north km on a local view (graticule, scale bar, north arrow) instead of lon / lat on the world map. */
-  local?: {sparse: boolean}
+  local?: {sparse: boolean; lat: number; lon: number}
 }
 
 // ---------- track building ----------
@@ -99,7 +101,13 @@ export function buildTrack(info: SkyObjectInfo): MapTrack {
   }
   if (info.kind === "helicopter") {
     const ht = heliTrack(info)
-    if (ht && ht.km.length >= 2) return {pts: ht.km, at: () => 1, showAhead: false, originCode: "", destCode: "", local: {sparse: ht.sparse}}
+    if (ht && ht.km.length >= 2) {
+      // The track ends at the helicopter, so km (0, 0) sits at its recorded position minus the end offset: that anchors the km frame on the real map.
+      const end = ht.km[ht.km.length - 1]
+      const lat0 = info.lat - end.y / 111.2
+      const lon0 = info.lon - end.x / (111.2 * Math.max(0.2, Math.cos(info.lat * D2R)))
+      return {pts: ht.km, at: () => 1, showAhead: false, originCode: "", destCode: "", local: {sparse: ht.sparse, lat: lat0, lon: lon0}}
+    }
   }
   // Helicopter (or a plane without airport data): dead-reckon the flown path back along heading and speed.
   const PAST_MIN = 15
@@ -181,6 +189,10 @@ export class RouteMap {
   private destDot: SceneObject
   private halo: SceneObject
   private grid: Layer
+  private baseWater: Layer
+  private baseRiver: Layer
+  private baseRoad: Layer
+  private basePark: Layer
   private marks: Layer
   private heliGlyph: SceneObject
   private dotRR!: RoundedRectangle
@@ -222,6 +234,10 @@ export class RouteMap {
     this.done = layer("MapRouteFlown", 0.1, new vec4(1, 1, 1, 1))
     this.grid = layer("MapGrid", 0.02, new vec4(1, 1, 1, 0.13))
     this.marks = layer("MapMarks", 0.12, new vec4(1, 1, 1, 0.85))
+    this.basePark = layer("MapBasePark", 0.01, new vec4(1, 1, 1, 0.22))
+    this.baseWater = layer("MapBaseWater", 0.015, new vec4(1, 1, 1, 0.55))
+    this.baseRiver = layer("MapBaseRiver", 0.016, new vec4(1, 1, 1, 0.55))
+    this.baseRoad = layer("MapBaseRoad", 0.017, new vec4(1, 1, 1, 0.34))
     const k = D / 110
     let lastRR!: RoundedRectangle
     const disc = (name: string, size: number, fill: vec4, border: vec4 | null, z: number): SceneObject => {
@@ -329,6 +345,7 @@ export class RouteMap {
       this.grid.so.enabled = false
       this.marks.so.enabled = false
       this.codes[2].text = ""
+      for (const l of [this.baseWater, this.baseRiver, this.baseRoad, this.basePark]) l.so.enabled = false
     }
     this.done.rmv.mainMaterial.mainPass.baseColor = on ? MINT : new vec4(1, 1, 1, 1)
     this.dotRR.backgroundColor = on ? MINT : TEXT.primary
@@ -358,7 +375,8 @@ export class RouteMap {
       for (const v of NICE_KM) if (v <= target) b = v
       return b
     }
-    // Graticule
+    this.buildBasemap(track.local as {sparse: boolean; lat: number; lon: number})
+    // Graticule (only as a fallback when no real basemap covers the area)
     const step = pick(Math.min(hxKm, hyKm) * 2 / 3)
     const g = new Strokes()
     for (let gx = Math.ceil((this.cLon - hxKm) / step) * step; gx <= this.cLon + hxKm; gx += step) {
@@ -369,8 +387,8 @@ export class RouteMap {
       const Y = (gy - this.cLat) * this.scale
       g.add(new vec2(-this.hx, Y), new vec2(this.hx, Y), 0.03)
     }
-    this.grid.so.enabled = !g.empty
-    if (!g.empty) this.grid.rmv.mesh = g.mesh()
+    this.grid.so.enabled = !g.empty && !this.basemapUsed
+    if (!g.empty && !this.basemapUsed) this.grid.rmv.mesh = g.mesh()
     // Scale bar (bottom left) and north arrow (top right)
     const m = new Strokes()
     const barKm = pick(hxKm * 2 * 0.3)
@@ -440,6 +458,52 @@ export class RouteMap {
     }
     layer.so.enabled = !s.empty
     if (!s.empty) layer.rmv.mesh = s.mesh()
+  }
+
+  private basemapUsed = false
+
+  /** Real local map under the helicopter track: water, rivers, major roads and parks of the recorded area nearest the track (thin outlines, clipped to the view). */
+  private buildBasemap(anchor: {lat: number; lon: number}): void {
+    const data = JSON.parse(BASEMAP.getString()) as {areas: {name: string; lat: number; lon: number; halfX: number; halfY: number; water: number[][]; river: number[][]; road: number[][]; park: number[][]}[]}
+    // Pick the area whose centre is nearest the view centre (the track centre in lat / lon).
+    const cLat = anchor.lat + this.cLat / 111.2
+    const cLon = anchor.lon + this.cLon / (111.2 * Math.cos(cLat * D2R))
+    let best: (typeof data.areas)[number] | null = null
+    let bestD = 1e9
+    for (const a of data.areas) {
+      const d = Math.hypot((a.lon - cLon) * Math.cos(a.lat * D2R) * 111.2, (a.lat - cLat) * 111.2)
+      if (d < bestD) { bestD = d; best = a }
+    }
+    this.basemapUsed = !!best && bestD < Math.max(best.halfX, best.halfY) * 0.5
+    for (const l of [this.baseWater, this.baseRiver, this.baseRoad, this.basePark]) l.so.enabled = false
+    if (!best || !this.basemapUsed) return
+    // km offset of the area's centre in the track's km frame
+    const offX = (best.lon - anchor.lon) * Math.cos(best.lat * D2R) * 111.2
+    const offY = (best.lat - anchor.lat) * 111.2
+    const minStep = 0.1
+    const draw = (layer: Layer, lines: number[][], hw: number) => {
+      const s = new Strokes()
+      for (const flat of lines) {
+        let last: vec2 | null = null
+        for (let i = 0; i < flat.length; i += 2) {
+          const p = this.proj(new vec2(flat[i] + offX, flat[i + 1] + offY))
+          const end = i + 2 >= flat.length
+          if (last && !end && p.distance(last) < minStep) continue
+          if (last) {
+            const c = clipSeg(last, p, this.hx, this.hy)
+            if (c) s.add(c[0], c[1], hw)
+          }
+          last = p
+          if (s.idx.length > 6 * 15000) break // stay inside the 16-bit index range of one mesh
+        }
+      }
+      layer.so.enabled = !s.empty
+      if (!s.empty) layer.rmv.mesh = s.mesh()
+    }
+    draw(this.basePark, best.park, 0.04)
+    draw(this.baseWater, best.water, 0.05)
+    draw(this.baseRiver, best.river, 0.05)
+    draw(this.baseRoad, best.road, 0.035)
   }
 
   private buildCoast(): void {

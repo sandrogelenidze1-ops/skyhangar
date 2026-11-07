@@ -111,6 +111,13 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     }
     this.build()
     this.createEvent("UpdateEvent").bind(() => this.update())
+    // The sky is at infinity: its root takes the camera's world POSITION (never rotation) EVERY frame, in the late step (after the camera has moved this frame),
+    // with no smoothing or lerp. Only head rotation changes where the stars / moon / dome / clouds appear, never head position (no shake when walking).
+    this.createEvent("LateUpdateEvent").bind(() => this.followCamera())
+  }
+
+  private followCamera(): void {
+    if (this.built && this.cameraObject) this.root.getTransform().setWorldPosition(this.cameraObject.getTransform().getWorldPosition())
   }
 
   /** 0 = day, 0.5 = dusk, 1 = night. */
@@ -140,7 +147,8 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
         const az = this.rand() * Math.PI * 2
         const el = Math.asin(sinMin + (1 - sinMin) * Math.pow(this.rand(), 0.6))
         dirs.push(dirOf(az, el))
-        sizes.push(B.size[0] + (B.size[1] - B.size[0]) * Math.pow(this.rand(), 2))
+        const fadeLow = 0.25 + 0.75 * smoothstep(0, 25, el / DEG) // stars shrink and dim gradually toward the horizon (their positions are unchanged)
+        sizes.push((B.size[0] + (B.size[1] - B.size[0]) * Math.pow(this.rand(), 2)) * fadeLow)
       }
       const m = this.layerMaterial(dotTex, true)
       this.starMats.push(m)
@@ -216,12 +224,12 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
 
   private lastTick = -1
 
-  /** Everything here is slow (the sky is at infinity), so it runs at most 10 times a second: head follow, Time of Day, cloud drift, star twinkle. */
+  /** Everything here is slow, so it runs at most 10 times a second: Time of Day, cloud drift, star twinkle. (The head follow is NOT here: it runs every frame in followCamera.) */
   private update(): void {
+    this.stepCloudJob() // one row of the cloud texture per frame (was one whole 300 ms layer per tick)
     const t = getTime()
     if (t - this.lastTick < 0.1) return
     this.lastTick = t
-    if (this.cameraObject) this.root.getTransform().setWorldPosition(this.cameraObject.getTransform().getWorldPosition())
     if (this.autoSunset) {
       // runs once from the start of the Lens; the slider value follows so the inspector shows progress
       this.timeOfDay = Math.min(1, t / Math.max(0.1, this.sunsetDurationSec))
@@ -231,8 +239,10 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
       this.cloudObjs[i].getTransform().setLocalRotation(quat.angleAxis(t * CLOUD_LAYERS[i].drift * DEG, vec3.up()))
     }
     if (this.starFade > 0.01) this.updateStars(t)
-    const next = this.pendingClouds.pop()
-    if (next) this.fillClouds(next.tex, next.seed)
+    if (!this.cloudJob) {
+      const next = this.pendingClouds.pop()
+      if (next) this.cloudJob = {tex: next.tex, seed: next.seed, data: new Uint8Array(CLOUD_W * CLOUD_H * 4), y: 0}
+    }
   }
 
   private apply(t: number): void {
@@ -261,8 +271,12 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
       const c0 = stopColor(DAY_STOPS, sel), c1 = stopColor(DUSK_STOPS, sel), c2 = nightStop(sel)
       const gk = 1 - smoothstep(-GROUND_BLEND_DEG, 0, el)
       const gc = minLuminance(mix3(GROUND_COLORS, w), luminanceFloor(w)) // the ground never goes below the time-of-day luminance floor
-      const cm = [0, 1, 2].map(k => (c0[k] * w[0] + c1[k] * w[1] + c2[k] * w[2]) * (1 - gk) + gc[k] * gk)
-      const c = minLuminance(editorTone(cm), largeSurfaceFloor(w)) // one uniform editor factor, then the 0.65 / 0.55 / 0.45 floor (hue kept)
+      // night is authored directly in display space (soft purplish blue), so the dusk colour stands in for it in the toned blend and the night target is mixed in by its weight
+      const cm = [0, 1, 2].map(k => (c0[k] * w[0] + c1[k] * (w[1] + w[2])) * (1 - gk) + gc[k] * gk)
+      const cTone = minLuminance(editorTone(cm), largeSurfaceFloor(w))
+      const nt = nightSkyColor(sel)
+      const ng = minLuminance(editorTone(gc), largeSurfaceFloor(w))
+      const c = [0, 1, 2].map(k => cTone[k] * (1 - w[2]) + (nt[k] * (1 - gk) + ng[k] * gk) * w[2]) // one uniform editor factor, then the 0.65 / 0.55 / 0.45 floor (hue kept)
       const lin = c
       const slope = [1 / 255, 1 / 255, 1 / 255]
       for (let x = 0; x < W; x++) {
@@ -299,28 +313,34 @@ export class SkyHangarPreviewBackdrop extends BaseScriptComponent {
     })
   }
 
-  /** Soft cloud density in alpha, white-grey shading in rgb; tinted per time of day by the material colour. */
-  private fillClouds(tex: Texture, seed: number): void {
-    const W = CLOUD_W, H = CLOUD_H
-    const data = new Uint8Array(W * H * 4)
-    let i = 0
-    for (let y = 0; y < H; y++) {
-      const el = CLOUD_EL0 + ((y + 0.5) / H) * (CLOUD_EL1 - CLOUD_EL0)
-      const ce = Math.cos(el * DEG), se = Math.sin(el * DEG)
-      const window = smoothstep(0.5, 6, el) * (1 - smoothstep(28, 50, el))
-      for (let x = 0; x < W; x++) {
-        const a = ((x + 0.5) / W) * Math.PI * 2
-        const px = Math.sin(a) * ce, pz = -Math.cos(a) * ce
-        const f = noise3(px * 2.6, se * 6.5, pz * 2.6, seed) * 0.65 + noise3(px * 5.4, se * 13, pz * 5.4, seed + 1) * 0.35
-        const cover = noise3(px * 0.9, se * 1.5, pz * 0.9, seed + 5)
-        const dens = smoothstep(0.62 - cover * 0.25, 0.8 - cover * 0.15, f) * window
-        const shade = 0.88 + 0.12 * f
-        const v = Math.round(255 * shade * (1 - 0.25 * dens * (1 - f)))
-        data[i++] = v; data[i++] = v; data[i++] = v
-        data[i++] = Math.round(255 * dens * 0.9)
-      }
+  private cloudJob: {tex: Texture; seed: number; data: Uint8Array; y: number} | null = null
+
+  /** Soft cloud density in alpha, white-grey shading in rgb; tinted per time of day by the material colour. Built one row per frame (same pixels as before), uploaded when done. */
+  private stepCloudJob(): void {
+    const job = this.cloudJob
+    if (!job) return
+    const W = CLOUD_W, H = CLOUD_H, seed = job.seed, data = job.data
+    const y = job.y
+    const el = CLOUD_EL0 + ((y + 0.5) / H) * (CLOUD_EL1 - CLOUD_EL0)
+    const ce = Math.cos(el * DEG), se = Math.sin(el * DEG)
+    const window = smoothstep(0.5, 6, el) * (1 - smoothstep(28, 50, el))
+    let i = y * W * 4
+    for (let x = 0; x < W; x++) {
+      const a = ((x + 0.5) / W) * Math.PI * 2
+      const px = Math.sin(a) * ce, pz = -Math.cos(a) * ce
+      const f = noise3(px * 2.6, se * 6.5, pz * 2.6, seed) * 0.65 + noise3(px * 5.4, se * 13, pz * 5.4, seed + 1) * 0.35
+      const cover = noise3(px * 0.9, se * 1.5, pz * 0.9, seed + 5)
+      const dens = smoothstep(0.62 - cover * 0.25, 0.8 - cover * 0.15, f) * window
+      const shade = 0.88 + 0.12 * f
+      const v = Math.round(255 * shade * (1 - 0.25 * dens * (1 - f)))
+      data[i++] = v; data[i++] = v; data[i++] = v
+      data[i++] = Math.round(255 * dens * 0.9)
     }
-    ;(tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, data)
+    job.y++
+    if (job.y >= H) {
+      ;(job.tex.control as ProceduralTextureProvider).setPixels(0, 0, W, H, data)
+      this.cloudJob = null
+    }
   }
 
   /** Each bucket fades in with night; the two brightest groups breathe slowly (+-6%). */
@@ -464,6 +484,18 @@ function timeWeights(t: number): number[] {
 
 function mix3(c: RGB[], w: number[]): RGB {
   return [c[0][0] * w[0] + c[1][0] * w[1] + c[2][0] * w[2], c[0][1] * w[0] + c[1][1] * w[1] + c[2][1] * w[2], c[0][2] * w[0] + c[1][2] * w[1] + c[2][2] * w[2]]
+}
+
+/** Night sky as displayed: a soft purplish blue #6464F8 overhead, easing into a deeper indigo (#4A3FCC) over the lowest 25 degrees. */
+function nightSkyColor(deg: number): RGB {
+  const k = smoothstep(0, 1, Math.max(0, Math.min(1, deg / 60)))
+  const h: RGB = [0x8b / 255, 0x5c / 255, 0xf6 / 255], t: RGB = [0x64 / 255, 0x64 / 255, 0xf8 / 255]
+  const sky: RGB = [h[0] + (t[0] - h[0]) * k, h[1] + (t[1] - h[1]) * k, h[2] + (t[2] - h[2]) * k] // the sky above (unchanged)
+  // Deeper horizon: over the lowest ~25 degrees the sky eases (smoothstep, no edges) from the purple-blue above into a deeper indigo, #4A3FCC at the horizon line.
+  // Never darker than ~#3A33B0: the display is additive and near-black would become see-through.
+  const deep: RGB = [0x4a / 255, 0x3f / 255, 0xcc / 255]
+  const w = 1 - smoothstep(0, 1, Math.max(0, Math.min(1, deg / 25)))
+  return [sky[0] + (deep[0] - sky[0]) * w, sky[1] + (deep[1] - sky[1]) * w, sky[2] + (deep[2] - sky[2]) * w]
 }
 
 /** Night colour with extra saturation: the preview adds a grey floor under dark colours, this keeps them blue-violet. */

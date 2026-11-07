@@ -23,8 +23,6 @@ Workspaces/**
 .vscode/mcp.json
 .codex/config.toml
 .claude/settings.local.json
-ls-live-instance.json
-ls-live-instance.json.tmp
 # END Lens Studio managed Agents-Docs block
 
 # Lens Studio generated / local state
@@ -47,3 +45,9 @@ desktop.ini
 
 # Added by Lens Studio (LEAF plugin)
 leaf_plugin_settings.json
+
+# Local-only working files (not part of the submission)
+_backup/
+Claude outputs/
+Cache_old/
+ls-live-instance.json
